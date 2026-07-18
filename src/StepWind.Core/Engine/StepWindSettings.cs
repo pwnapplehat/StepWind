@@ -23,6 +23,9 @@ public sealed class StepWindSettings
     /// <summary>Whole-machine operation flight recorder (USN + ETW). Needs the service.</summary>
     public bool FlightRecorderEnabled { get; set; } = true;
 
+    /// <summary>Automatic silent updates, applied by the SYSTEM service (no UAC). Default on.</summary>
+    public bool AutoUpdateEnabled { get; set; } = true;
+
     /// <summary>Encrypt the store with a passphrase (key derived; salt stored in the repo).</summary>
     public bool EncryptionEnabled { get; set; }
 

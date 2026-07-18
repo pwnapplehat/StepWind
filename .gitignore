@@ -44,3 +44,5 @@ installer/Output/
 
 # Screenshot capture default output
 shot.png
+installer/Output/
+release/

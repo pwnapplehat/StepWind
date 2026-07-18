@@ -21,8 +21,6 @@ foreach ($p in $projects) {
 }
 
 Copy-Item (Join-Path $root "LICENSE") $dist -Force
-Copy-Item (Join-Path $root "install.ps1") $dist -Force -ErrorAction SilentlyContinue
-Copy-Item (Join-Path $root "README.md") $dist -Force -ErrorAction SilentlyContinue
 
 Get-ChildItem $dist -File | Where-Object { $_.Extension -in '.exe' } |
     ForEach-Object { Write-Host ("  {0,-26} {1,8:N1} MB" -f $_.Name, ($_.Length/1MB)) }

@@ -58,6 +58,9 @@ a lightly-edited 2 GB file doesn't cost 2 GB per save.
   OneDrive online-only files are skipped (versioning a placeholder would force a full download).
 - **Honest architecture**: an elevated background **service** does the privileged work
   (journal + ETW); the tray **GUI** runs unelevated and talks to it over a local, ACL'd pipe.
+- **Fully automatic, silent updates** — because the service already runs as SYSTEM, it
+  checks GitHub for new releases, verifies the setup's SHA-256, and installs it with **zero
+  UAC prompts**. Set-and-forget, like it should be.
 
 ## Architecture
 
@@ -84,10 +87,20 @@ tests/                 deterministic Core tests
 - **Live demo**: the real service running, the timeline populated with an actual incident,
   and Undo working (see the screenshot above).
 
-## Requirements
+## Install
 
-- Windows 10 (1809+) or Windows 11, an NTFS drive, and admin rights to install the service
-  (the tray app itself runs unelevated).
+Download **StepWind-x.y.z-setup.exe** from
+[Releases](https://github.com/pwnapplehat/StepWind/releases) and run it. The installer sets
+up the background service (auto-start), starts protecting immediately, and launches the tray
+app (which then starts with Windows). From then on StepWind keeps itself up to date
+automatically and silently — no reinstalling, no prompts. Uninstall from Settings → Apps like
+any program; your version history is left intact.
+
+Windows 10 (1809+) or Windows 11, an NTFS drive.
+
+> **"Windows protected your PC"?** Expected for a new unsigned installer — not a malware
+> detection. Click **More info → Run anyway**. It's open source; each release ships a
+> `SHA256SUMS.txt`.
 
 ## Building
 
@@ -95,10 +108,10 @@ tests/                 deterministic Core tests
 dotnet build StepWind.slnx      # build everything
 dotnet test                     # Core test suite
 ./build/publish.ps1             # self-contained service + GUI + CLI → dist/
-./install.ps1                   # (elevated, from dist/) register + start service
+iscc installer\stepwind.iss     # build the setup .exe → installer/Output/
 ```
 
-Requires the .NET 10 SDK.
+Requires the .NET 10 SDK (and Inno Setup 6 for the installer).
 
 ## License
 

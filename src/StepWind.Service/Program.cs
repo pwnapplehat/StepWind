@@ -16,12 +16,22 @@ namespace StepWind.Service;
 [SupportedOSPlatform("windows")]
 public static class Program
 {
-    public static void Main(string[] args)
+    public static int Main(string[] args)
     {
+        // Installer-invoked service management verbs (run elevated by the installer).
+        switch (args.FirstOrDefault()?.ToLowerInvariant())
+        {
+            case "install-service": return ServiceControl.Install();
+            case "uninstall-service": return ServiceControl.Uninstall();
+            case "start-service": return ServiceControl.Start();
+            case "stop-service": return ServiceControl.Stop();
+        }
+
         HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
         builder.Services.AddWindowsService(o => o.ServiceName = "StepWind");
         builder.Services.AddHostedService<StepWindWorker>();
         builder.Build().Run();
+        return 0;
     }
 }
 
@@ -44,7 +54,32 @@ public sealed class StepWindWorker : BackgroundService
         _pipe.Start();
 
         _logger.LogInformation("StepWind service started; watching {Count} folder(s).", settings.WatchedFolders.Count);
+
+        if (settings.AutoUpdateEnabled)
+        {
+            _ = RunUpdateLoopAsync(stoppingToken);
+        }
+
         return Task.CompletedTask;
+    }
+
+    /// <summary>Automatic silent updates: one check shortly after start, then daily.</summary>
+    private async Task RunUpdateLoopAsync(CancellationToken ct)
+    {
+        var updater = new UpdateService(msg => _logger.LogInformation("[update] {Message}", msg));
+        try
+        {
+            await Task.Delay(TimeSpan.FromMinutes(2), ct);
+            while (!ct.IsCancellationRequested)
+            {
+                await updater.CheckAndApplyAsync(ct);
+                await Task.Delay(TimeSpan.FromHours(24), ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // service stopping
+        }
     }
 
     public override Task StopAsync(CancellationToken cancellationToken)
