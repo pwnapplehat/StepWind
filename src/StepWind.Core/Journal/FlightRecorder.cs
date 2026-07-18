@@ -1,0 +1,256 @@
+using System.Collections.Concurrent;
+using System.Runtime.Versioning;
+using System.Text.Json;
+using StepWind.Core.Attribution;
+
+namespace StepWind.Core.Journal;
+
+/// <summary>
+/// The whole-machine flight recorder: continuously tails the NTFS USN journal on each fixed
+/// volume, reconstructs user-meaningful operations, attributes them to a process via ETW, and
+/// keeps a bounded rolling window in memory for the timeline UI. Persists a per-volume cursor
+/// (journal id + last USN) so a restart resumes exactly where it left off — and detects a
+/// journal-id change or a cursor that predates the journal's first record (wrap/overflow),
+/// resetting to the current end rather than silently missing or double-reading.
+///
+/// Runs in the elevated service. All public members are thread-safe.
+/// </summary>
+[SupportedOSPlatform("windows")]
+public sealed class FlightRecorder : IDisposable
+{
+    private sealed record Cursor(ulong JournalId, long NextUsn);
+
+    private readonly string _cursorPath;
+    private readonly int _capacity;
+    private readonly Action<string>? _log;
+    private readonly FileAttributionTracker _attribution = new();
+    private readonly ConcurrentDictionary<string, Cursor> _cursors = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<FileOperation> _recent = new();
+    private readonly object _recentLock = new();
+    private readonly System.Threading.Timer _timer;
+    private readonly string[] _volumes;
+
+    private readonly string[] _ignorePrefixes;
+
+    public FlightRecorder(string stateDir, IEnumerable<string> volumes, int capacity = 5000,
+        Action<string>? log = null, IEnumerable<string>? ignorePrefixes = null)
+    {
+        _cursorPath = System.IO.Path.Combine(stateDir, "usn-cursors.json");
+        _capacity = capacity;
+        _log = log;
+        _volumes = [.. volumes];
+        // Never show StepWind's own bookkeeping (store + state dir) on the timeline, plus any
+        // caller-supplied noise prefixes. Keeps "what just happened" about the USER's actions.
+        _ignorePrefixes = [.. (ignorePrefixes ?? []).Append(stateDir)
+            .Select(p => p.TrimEnd('\\', '/')).Where(p => p.Length > 0)];
+        System.IO.Directory.CreateDirectory(stateDir);
+        LoadCursors();
+        _attribution.Start();
+
+        // Prime cursors to "now" for volumes we've never seen, so the first poll doesn't
+        // replay the entire existing journal as if it all just happened.
+        foreach (string vol in _volumes)
+        {
+            if (!_cursors.ContainsKey(vol))
+            {
+                TryPrime(vol);
+            }
+        }
+
+        _timer = new System.Threading.Timer(_ => Poll(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
+    }
+
+    /// <summary>Most recent operations, newest first, up to <paramref name="limit"/>.</summary>
+    public IReadOnlyList<FileOperation> Recent(int limit)
+    {
+        lock (_recentLock)
+        {
+            return [.. _recent.Take(limit)];
+        }
+    }
+
+    private void TryPrime(string volume)
+    {
+        try
+        {
+            using var reader = new UsnJournalReader(volume);
+            (ulong id, long next) = reader.Query();
+            _cursors[volume] = new Cursor(id, next);
+        }
+        catch (Exception ex)
+        {
+            _log?.Invoke($"prime {volume}: {ex.Message}");
+        }
+    }
+
+    private void Poll()
+    {
+        foreach (string volume in _volumes)
+        {
+            try
+            {
+                PollVolume(volume);
+            }
+            catch (Exception ex)
+            {
+                _log?.Invoke($"poll {volume}: {ex.Message}");
+            }
+        }
+    }
+
+    private void PollVolume(string volume)
+    {
+        using var reader = new UsnJournalReader(volume);
+        (ulong journalId, long endUsn) = reader.Query();
+
+        Cursor cursor = _cursors.GetValueOrDefault(volume) ?? new Cursor(journalId, endUsn);
+
+        // Wrap / journal recreated: our cursor is meaningless → jump to the current end.
+        if (cursor.JournalId != journalId)
+        {
+            _log?.Invoke($"{volume}: journal changed (wrap/reset) — resyncing to end");
+            cursor = new Cursor(journalId, endUsn);
+        }
+
+        (List<UsnRecord> records, long nextUsn) = reader.Read(journalId, cursor.NextUsn);
+        if (records.Count > 0)
+        {
+            var reconstructor = new OperationReconstructor(reader.ResolveDirectory);
+            foreach (FileOperation op in reconstructor.Reconstruct(records))
+            {
+                if (IsNoise(op))
+                {
+                    continue;
+                }
+
+                Add(op with { ByProcess = AttributeOp(op) });
+            }
+        }
+
+        _cursors[volume] = new Cursor(journalId, nextUsn);
+        SaveCursors();
+    }
+
+    /// <summary>
+    /// Filters out operations the user doesn't care about: StepWind's own store/state churn,
+    /// and the temp/journal/database sidecar files apps constantly rewrite (-wal, -shm, .tmp).
+    /// Keeping the timeline about real user actions is what makes it usable.
+    /// </summary>
+    private bool IsNoise(FileOperation op)
+    {
+        string? path = op.NewPath ?? op.OldPath;
+        if (path is not null)
+        {
+            foreach (string prefix in _ignorePrefixes)
+            {
+                if (path.StartsWith(prefix + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        // Program-internal churn locations. These are where apps constantly rewrite their own
+        // state/caches — almost never a file-management action the user would want to "undo".
+        // The timeline is about YOUR documents; showing AppData/Windows/temp noise would bury
+        // the one operation you care about. (A future "show everything" toggle can lift this.)
+        if (path is not null && IsProgramInternal(path))
+        {
+            return true;
+        }
+
+        string name = op.Name;
+        if (name.EndsWith("-wal", StringComparison.OrdinalIgnoreCase) || name.EndsWith("-shm", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".log", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".etl", StringComparison.OrdinalIgnoreCase) || OperationReconstructor.IsDeletedMarker(name)
+            || name.StartsWith("usn-cursors", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsProgramInternal(string path)
+    {
+        // Match as path segments (case-insensitive) so we don't false-positive on a user
+        // folder literally named "Temp" elsewhere.
+        ReadOnlySpan<char> p = path;
+        string[] needles =
+        [
+            @"\AppData\Local\", @"\AppData\Roaming\", @"\AppData\LocalLow\",
+            @"\Windows\", @"\ProgramData\", @"\$Recycle.Bin\", @"\Program Files\", @"\Program Files (x86)\",
+            @"\Microsoft\", @"\Packages\",
+        ];
+        foreach (string n in needles)
+        {
+            if (path.Contains(n, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private string? AttributeOp(FileOperation op)
+    {
+        string? path = op.NewPath ?? op.OldPath;
+        return path is null ? null : _attribution.AttributeByPath(path, TimeSpan.FromSeconds(15));
+    }
+
+    private void Add(FileOperation op)
+    {
+        lock (_recentLock)
+        {
+            _recent.AddFirst(op);
+            while (_recent.Count > _capacity)
+            {
+                _recent.RemoveLast();
+            }
+        }
+    }
+
+    private void LoadCursors()
+    {
+        try
+        {
+            if (System.IO.File.Exists(_cursorPath))
+            {
+                var loaded = JsonSerializer.Deserialize<Dictionary<string, Cursor>>(System.IO.File.ReadAllText(_cursorPath));
+                if (loaded is not null)
+                {
+                    foreach (KeyValuePair<string, Cursor> kv in loaded)
+                    {
+                        _cursors[kv.Key] = kv.Value;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // corrupt cursor file → re-prime from scratch (safe: we resync to end)
+        }
+    }
+
+    private void SaveCursors()
+    {
+        try
+        {
+            string tmp = _cursorPath + ".tmp";
+            System.IO.File.WriteAllText(tmp, JsonSerializer.Serialize(_cursors));
+            System.IO.File.Move(tmp, _cursorPath, overwrite: true);
+        }
+        catch
+        {
+            // best effort — a lost cursor just means a resync-to-end next start
+        }
+    }
+
+    public void Dispose()
+    {
+        _timer.Dispose();
+        _attribution.Dispose();
+        SaveCursors();
+    }
+}

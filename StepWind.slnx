@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/StepWind.App/StepWind.App.csproj" />
+    <Project Path="src/StepWind.Cli/StepWind.Cli.csproj" />
+    <Project Path="src/StepWind.Core/StepWind.Core.csproj" />
+    <Project Path="src/StepWind.Service/StepWind.Service.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/StepWind.Core.Tests/StepWind.Core.Tests.csproj" />
+  </Folder>
+</Solution>
