@@ -77,10 +77,19 @@ public sealed class StepWindSettings
         }
     }
 
-    /// <summary>Sensible first-run defaults: watch the user's real work folders.</summary>
-    public static StepWindSettings CreateDefault()
+    /// <summary>
+    /// First-run defaults. Deliberately NO watched folders: the service runs as LocalSystem,
+    /// whose "Documents"/"Desktop" are the system profile's, not the logged-in user's — so
+    /// picking folders here would watch the wrong (or non-existent) paths. The GUI runs as the
+    /// real user, computes their actual work folders via <see cref="DefaultUserFolders"/>, and
+    /// pushes them to the service over IPC on first run.
+    /// </summary>
+    public static StepWindSettings CreateDefault() => new();
+
+    /// <summary>The current user's real work folders — call this from the GUI, not the service.</summary>
+    public static List<string> DefaultUserFolders()
     {
-        var s = new StepWindSettings();
+        var folders = new List<string>();
         foreach (Environment.SpecialFolder f in new[]
         {
             Environment.SpecialFolder.MyDocuments,
@@ -89,12 +98,13 @@ public sealed class StepWindSettings
         })
         {
             string path = Environment.GetFolderPath(f);
-            if (!string.IsNullOrEmpty(path) && Directory.Exists(path))
+            if (!string.IsNullOrEmpty(path) && Directory.Exists(path)
+                && !folders.Contains(path, StringComparer.OrdinalIgnoreCase))
             {
-                s.WatchedFolders.Add(path);
+                folders.Add(path);
             }
         }
 
-        return s;
+        return folders;
     }
 }

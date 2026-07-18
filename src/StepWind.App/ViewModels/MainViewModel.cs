@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows.Threading;
+using StepWind.Core.Engine;
 using StepWind.Core.Ipc;
 
 namespace StepWind.App.ViewModels;
@@ -71,6 +72,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set { _historyPath = value; OnChanged(); }
     }
 
+    private bool _seededDefaults;
+
+    public ObservableCollection<string> WatchedFolders { get; } = [];
+
     public async Task RefreshAsync()
     {
         IpcResponse status = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetStatus });
@@ -82,19 +87,97 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
 
         ServiceUp = true;
+        int roots;
         using (JsonDocument doc = JsonDocument.Parse(status.Json!))
         {
             JsonElement r = doc.RootElement;
-            int roots = r.GetProperty("WatchedRoots").GetInt32();
+            roots = r.GetProperty("WatchedRoots").GetInt32();
             long versions = r.TryGetProperty("TotalVersions", out JsonElement tv) ? tv.GetInt64() : 0;
             bool fr = r.TryGetProperty("FlightRecorder", out JsonElement f) && f.GetBoolean();
-            Status = $"Protecting {roots} folder(s) · {versions:N0} versions kept · flight recorder {(fr ? "on" : "off")}";
+            Status = roots == 0
+                ? $"No folders protected yet — add one to keep version history · flight recorder {(fr ? "on" : "off")}"
+                : $"Protecting {roots} folder(s) · {versions:N0} versions kept · flight recorder {(fr ? "on" : "off")}";
         }
 
+        // First-run seeding: the SYSTEM service can't see the user's real folders, so the GUI
+        // (running as the user) supplies sensible defaults the first time it finds none.
+        if (roots == 0 && !_seededDefaults)
+        {
+            _seededDefaults = true;
+            List<string> defaults = StepWindSettings.DefaultUserFolders();
+            if (defaults.Count > 0)
+            {
+                await SetWatchedFoldersAsync(defaults);
+            }
+        }
+
+        await LoadSettingsAsync();
         await LoadTimelineAsync();
         if (!string.IsNullOrWhiteSpace(_historyPath))
         {
             await LoadHistoryAsync(_historyPath);
+        }
+    }
+
+    public async Task LoadSettingsAsync()
+    {
+        IpcResponse resp = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetSettings });
+        if (!resp.Ok || resp.Json is null)
+        {
+            return;
+        }
+
+        WatchedFolders.Clear();
+        using JsonDocument doc = JsonDocument.Parse(resp.Json);
+        if (doc.RootElement.TryGetProperty("WatchedFolders", out JsonElement wf) && wf.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement e in wf.EnumerateArray())
+            {
+                if (e.GetString() is { Length: > 0 } path)
+                {
+                    WatchedFolders.Add(path);
+                }
+            }
+        }
+    }
+
+    public async Task AddWatchedFolderAsync(string folder)
+    {
+        var set = WatchedFolders.ToList();
+        if (!set.Contains(folder, StringComparer.OrdinalIgnoreCase))
+        {
+            set.Add(folder);
+            await SetWatchedFoldersAsync(set);
+        }
+    }
+
+    public async Task RemoveWatchedFolderAsync(string folder)
+    {
+        var set = WatchedFolders.Where(f => !f.Equals(folder, StringComparison.OrdinalIgnoreCase)).ToList();
+        await SetWatchedFoldersAsync(set);
+    }
+
+    private async Task SetWatchedFoldersAsync(List<string> folders)
+    {
+        string json = JsonSerializer.Serialize(new { WatchedFolders = folders });
+        await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.SetSettings, Arg1 = json });
+        await LoadSettingsAsync();
+        await RefreshStatusOnlyAsync();
+    }
+
+    private async Task RefreshStatusOnlyAsync()
+    {
+        IpcResponse status = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetStatus });
+        if (status.Ok && status.Json is not null)
+        {
+            using JsonDocument doc = JsonDocument.Parse(status.Json);
+            JsonElement r = doc.RootElement;
+            int roots = r.GetProperty("WatchedRoots").GetInt32();
+            long versions = r.TryGetProperty("TotalVersions", out JsonElement tv) ? tv.GetInt64() : 0;
+            bool fr = r.TryGetProperty("FlightRecorder", out JsonElement f) && f.GetBoolean();
+            Status = roots == 0
+                ? $"No folders protected yet — add one to keep version history · flight recorder {(fr ? "on" : "off")}"
+                : $"Protecting {roots} folder(s) · {versions:N0} versions kept · flight recorder {(fr ? "on" : "off")}";
         }
     }
 

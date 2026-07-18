@@ -13,13 +13,14 @@
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
     </Grid.RowDefinitions>
 
     <!-- Taskbar-style smoke tint over the acrylic (65%): the wallpaper blur stays visible,
          but text and cards keep contrast on any wallpaper. Shown only when the acrylic
          backdrop actually applied (see OnSourceInitialized) — matches BitBroom / Rescue. -->
-    <Border x:Name="SmokeTint" Grid.RowSpan="3" Background="#A60E1014" Visibility="Collapsed"/>
+    <Border x:Name="SmokeTint" Grid.RowSpan="4" Background="#A60E1014" Visibility="Collapsed"/>
 
     <tb:TaskbarIcon x:Name="Tray" ToolTipText="StepWind — an undo button for your PC"
                     TrayMouseDoubleClick="OnTrayOpen">
@@ -71,8 +72,41 @@
       </Grid>
     </Border>
 
+    <!-- Protected-folders manager -->
+    <Border Grid.Row="2" Margin="16,10,16,0" CornerRadius="10" Padding="14,10"
+            Background="{DynamicResource ControlFillColorDefaultBrush}"
+            BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+        <TextBlock Text="Protected folders" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0"/>
+        <ItemsControl Grid.Column="1" ItemsSource="{Binding WatchedFolders}" VerticalAlignment="Center">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border CornerRadius="6" Margin="0,2,6,2" Padding="8,3"
+                      Background="{DynamicResource ControlStrokeColorDefaultBrush}">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="{Binding}" VerticalAlignment="Center" FontSize="12"
+                             TextTrimming="CharacterEllipsis" MaxWidth="320"/>
+                  <ui:Button Padding="4,0" Margin="6,0,0,0" Appearance="Transparent" FontSize="11"
+                             Content="✕" ToolTip="Stop protecting this folder" Click="OnRemoveFolder"/>
+                </StackPanel>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <ui:Button Grid.Column="2" Content="Add folder…" Appearance="Secondary" Click="OnAddFolder"/>
+      </Grid>
+    </Border>
+
     <!-- Two panes: operation timeline (flight recorder) + file version history -->
-    <Grid Grid.Row="2" Margin="16,10,16,16">
+    <Grid Grid.Row="3" Margin="16,10,16,16">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="*"/>
         <ColumnDefinition Width="12"/>
@@ -129,11 +163,18 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
-          <TextBlock Margin="14,4,14,6" FontWeight="SemiBold" Text="File version history"/>
-          <ui:TextBox Grid.Row="1" Margin="10,0,10,8" x:Name="HistoryBox"
-                      PlaceholderText="watched-folder/path.ext"
-                      Text="{Binding HistoryPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                      KeyDown="OnHistoryKeyDown"/>
+          <Grid Margin="14,4,10,6">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="File version history" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            <ui:Button Grid.Column="1" Content="Browse a file…" Appearance="Primary" FontSize="12"
+                       Padding="10,4" Click="OnBrowseFile"/>
+          </Grid>
+          <TextBlock Grid.Row="1" Margin="14,0,10,8" FontSize="12" Foreground="{StaticResource Brush.Muted}"
+                     TextWrapping="Wrap" x:Name="HistoryHint"
+                     Text="Pick any file in a protected folder to see every saved version — and restore one, even if the file was overwritten or deleted."/>
           <ListBox Grid.Row="2" ItemsSource="{Binding History}" BorderThickness="0" Background="Transparent"
                    HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.ItemTemplate>

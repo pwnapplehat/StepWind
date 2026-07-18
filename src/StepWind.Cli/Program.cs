@@ -16,8 +16,19 @@ return args.FirstOrDefault()?.ToLowerInvariant() switch
     "journal" => Journal(args.ElementAtOrDefault(1) ?? "C:", int.TryParse(args.ElementAtOrDefault(2), out int n) ? n : 40),
     "e2e" => E2E(),
     "probe" => Probe(),
+    "settings" => DumpSettings(),
     _ => Help(),
 };
+
+// Queries the running service's GetSettings over the pipe (diagnostic).
+static int DumpSettings()
+{
+    var client = new StepWind.Core.Ipc.PipeClient();
+    StepWind.Core.Ipc.IpcResponse r = client.SendAsync(
+        new StepWind.Core.Ipc.IpcRequest { Command = StepWind.Core.Ipc.IpcCommand.GetSettings }).GetAwaiter().GetResult();
+    Console.WriteLine(r.Ok ? r.Json : "ERR: " + r.Error);
+    return r.Ok ? 0 : 1;
+}
 
 // Isolates ResolveDirectory: create a dir, learn its file-reference-number, resolve it back.
 [SupportedOSPlatform("windows")]

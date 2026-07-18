@@ -17,11 +17,12 @@ public sealed class StepWindHost : IDisposable
 {
     private readonly StepWindSettings _settings;
     private readonly VersionStore _store;
-    private readonly WatchEngine _watch;
     private readonly FlightRecorder? _flightRecorder;
     private readonly System.Threading.Timer _retentionTimer;
     private readonly Action<string>? _log;
     private readonly RealFileSystemActions _fs = new();
+    private readonly object _watchLock = new();
+    private WatchEngine _watch;
 
     public StepWindHost(StepWindSettings settings, IBlobCodec codec, Action<string>? log = null)
     {
@@ -33,13 +34,7 @@ public sealed class StepWindHost : IDisposable
             new VersionLog(System.IO.Path.Combine(settings.StoreRoot, "versions.jsonl")));
         _store.Blobs.CleanTemp(); // drop any half-written blobs from a previous crash
 
-        var exclusions = new PathExclusions { MaxFileBytes = settings.MaxFileBytes };
-        foreach (string prefix in settings.ExcludedPrefixes)
-        {
-            exclusions.ExcludePrefix(prefix);
-        }
-
-        _watch = new WatchEngine(_store, exclusions, settings.WatchedFolders, log);
+        _watch = BuildWatch();
 
         if (settings.FlightRecorderEnabled)
         {
@@ -59,6 +54,18 @@ public sealed class StepWindHost : IDisposable
             TimeSpan.FromMinutes(5), TimeSpan.FromHours(24));
     }
 
+    /// <summary>Creates a watch engine from the current settings (exclusions applied).</summary>
+    private WatchEngine BuildWatch()
+    {
+        var exclusions = new PathExclusions { MaxFileBytes = _settings.MaxFileBytes };
+        foreach (string prefix in _settings.ExcludedPrefixes)
+        {
+            exclusions.ExcludePrefix(prefix);
+        }
+
+        return new WatchEngine(_store, exclusions, _settings.WatchedFolders, _log);
+    }
+
     public IpcResponse Handle(IpcRequest request)
     {
         try
@@ -72,6 +79,8 @@ public sealed class StepWindHost : IDisposable
                 IpcCommand.ReverseOperation => ReverseOperation(request.Arg1 ?? ""),
                 IpcCommand.RestoreVersion => RestoreVersion(request.Arg1 ?? "", request.Arg2),
                 IpcCommand.RunRetention => RunRetentionCommand(),
+                IpcCommand.GetSettings => Ok(BuildSettings()),
+                IpcCommand.SetSettings => ApplySettings(request.Arg1 ?? ""),
                 _ => IpcResponse.Fail("unsupported command"),
             };
         }
@@ -122,8 +131,81 @@ public sealed class StepWindHost : IDisposable
         return entries;
     }
 
-    private List<VersionEntry> BuildHistory(string relativePath)
+    private object BuildSettings() => new
     {
+        _settings.WatchedFolders,
+        _settings.ExcludedPrefixes,
+        _settings.FlightRecorderEnabled,
+        _settings.AutoUpdateEnabled,
+    };
+
+    /// <summary>Editable slice of settings the GUI can push (WatchedFolders is the main one).</summary>
+    private sealed class SettingsPatch
+    {
+        public List<string>? WatchedFolders { get; set; }
+        public List<string>? ExcludedPrefixes { get; set; }
+        public bool? AutoUpdateEnabled { get; set; }
+    }
+
+    private IpcResponse ApplySettings(string json)
+    {
+        SettingsPatch? patch = JsonSerializer.Deserialize<SettingsPatch>(json);
+        if (patch is null)
+        {
+            return IpcResponse.Fail("bad settings payload");
+        }
+
+        bool foldersChanged = false;
+        if (patch.WatchedFolders is not null)
+        {
+            // Keep only real, existing, de-duplicated directories.
+            var cleaned = patch.WatchedFolders
+                .Where(p => !string.IsNullOrWhiteSpace(p) && System.IO.Directory.Exists(p))
+                .Select(p => p.TrimEnd('\\', '/'))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            foldersChanged = !cleaned.SequenceEqual(_settings.WatchedFolders, StringComparer.OrdinalIgnoreCase);
+            _settings.WatchedFolders = cleaned;
+        }
+
+        if (patch.ExcludedPrefixes is not null)
+        {
+            _settings.ExcludedPrefixes = [.. patch.ExcludedPrefixes];
+            foldersChanged = true;
+        }
+
+        if (patch.AutoUpdateEnabled is bool au)
+        {
+            _settings.AutoUpdateEnabled = au;
+        }
+
+        _settings.Save();
+
+        if (foldersChanged)
+        {
+            lock (_watchLock)
+            {
+                WatchEngine old = _watch;
+                _watch = BuildWatch(); // start watching the new set…
+                old.Dispose();          // …then tear down the old watchers
+            }
+
+            _log?.Invoke($"watched folders updated ({_settings.WatchedFolders.Count})");
+        }
+
+        return Ok(BuildSettings());
+    }
+
+    private List<VersionEntry> BuildHistory(string pathOrRelative)
+    {
+        // Accept either a store-relative path ("Documents/report.txt") or an absolute file
+        // path (from the GUI's Browse button) — resolve the latter against the watched roots.
+        string relativePath = pathOrRelative;
+        if (pathOrRelative.Contains(':') || pathOrRelative.StartsWith('\\'))
+        {
+            relativePath = _watch.RelativeToRoot(pathOrRelative) ?? pathOrRelative;
+        }
+
         var list = new List<VersionEntry>();
         foreach (FileVersion v in _store.Log.History(relativePath).OrderByDescending(v => v.CapturedUtc))
         {
@@ -240,7 +322,11 @@ public sealed class StepWindHost : IDisposable
     public void Dispose()
     {
         _retentionTimer.Dispose();
-        _watch.Dispose();
+        lock (_watchLock)
+        {
+            _watch.Dispose();
+        }
+
         _flightRecorder?.Dispose();
     }
 

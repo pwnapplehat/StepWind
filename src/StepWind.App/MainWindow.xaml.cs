@@ -105,11 +105,39 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private async void OnHistoryKeyDown(object sender, KeyEventArgs e)
+    private async void OnBrowseFile(object sender, RoutedEventArgs e)
     {
-        if (e.Key == Key.Enter)
+        var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            await _viewModel.LoadHistoryAsync(HistoryBox.Text);
+            Title = "Pick a file to see its version history",
+            CheckFileExists = false, // a deleted file can still have history
+        };
+        if (dialog.ShowDialog() == true)
+        {
+            HistoryHint.Text = "History for: " + dialog.FileName;
+            await _viewModel.LoadHistoryAsync(dialog.FileName); // absolute path; service resolves it
+            if (_viewModel.History.Count == 0)
+            {
+                HistoryHint.Text = "No versions yet for that file — it may be outside a protected folder, " +
+                    "or it hasn't been saved since protection started.";
+            }
+        }
+    }
+
+    private async void OnAddFolder(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Choose a folder to protect" };
+        if (dialog.ShowDialog() == true)
+        {
+            await _viewModel.AddWatchedFolderAsync(dialog.FolderName);
+        }
+    }
+
+    private async void OnRemoveFolder(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is string folder)
+        {
+            await _viewModel.RemoveWatchedFolderAsync(folder);
         }
     }
 

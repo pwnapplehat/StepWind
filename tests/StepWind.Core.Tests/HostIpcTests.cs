@@ -79,6 +79,79 @@ public class HostIpcTests : IDisposable
         Assert.Empty(JsonSerializer.Deserialize<TimelineEntry[]>(r.Json!)!);
     }
 
+    [Fact]
+    public async Task History_can_be_queried_by_absolute_path()
+    {
+        // The GUI's Browse button sends an absolute path; the host resolves it to the
+        // store-relative path against the watched roots.
+        string file = Path.Combine(_watch, "sub", "memo.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        File.WriteAllText(file, "v1");
+        await WaitForCapture("Docs/sub/memo.txt");
+
+        IpcResponse resp = _host.Handle(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = file });
+        Assert.True(resp.Ok);
+        Assert.NotEmpty(JsonSerializer.Deserialize<VersionEntry[]>(resp.Json!)!);
+    }
+
+    [Fact]
+    public void SetSettings_adds_a_watched_folder_and_getsettings_reflects_it()
+    {
+        string extra = Path.Combine(_root, "Extra");
+        Directory.CreateDirectory(extra);
+
+        string patch = JsonSerializer.Serialize(new { WatchedFolders = new[] { _watch, extra } });
+        IpcResponse set = _host.Handle(new IpcRequest { Command = IpcCommand.SetSettings, Arg1 = patch });
+        Assert.True(set.Ok, set.Error);
+
+        IpcResponse get = _host.Handle(new IpcRequest { Command = IpcCommand.GetSettings });
+        using JsonDocument doc = JsonDocument.Parse(get.Json!);
+        var folders = doc.RootElement.GetProperty("WatchedFolders").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Contains(extra, folders);
+        Assert.Equal(2, folders.Count);
+    }
+
+    [Fact]
+    public void SetSettings_ignores_nonexistent_folders()
+    {
+        string patch = JsonSerializer.Serialize(new { WatchedFolders = new[] { _watch, @"C:\definitely\not\here\xyz123" } });
+        _host.Handle(new IpcRequest { Command = IpcCommand.SetSettings, Arg1 = patch });
+
+        IpcResponse get = _host.Handle(new IpcRequest { Command = IpcCommand.GetSettings });
+        using JsonDocument doc = JsonDocument.Parse(get.Json!);
+        var folders = doc.RootElement.GetProperty("WatchedFolders").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Single(folders); // only the real one survived
+    }
+
+    [Fact]
+    public async Task Newly_added_folder_starts_capturing()
+    {
+        string extra = Path.Combine(_root, "Later");
+        Directory.CreateDirectory(extra);
+        _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { WatchedFolders = new[] { _watch, extra } }),
+        });
+
+        string file = Path.Combine(extra, "new.txt");
+        File.WriteAllText(file, "hello");
+
+        // The rebuilt watch engine should capture saves in the newly added folder.
+        for (int i = 0; i < 40; i++)
+        {
+            IpcResponse h = _host.Handle(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = file });
+            if (h.Ok && JsonSerializer.Deserialize<VersionEntry[]>(h.Json!)!.Length > 0)
+            {
+                return; // captured — pass
+            }
+
+            await Task.Delay(250);
+        }
+
+        Assert.Fail("newly added folder did not start capturing");
+    }
+
     private async Task WaitForCapture(string rel)
     {
         for (int i = 0; i < 40; i++)
