@@ -15,6 +15,7 @@
       </ResourceDictionary.MergedDictionaries>
 
       <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+      <local:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis"/>
       <local:ViewVisibilityConverter x:Key="ViewVis"/>
       <local:KindBrushConverter x:Key="KindBrush"/>
       <local:KindBrushConverter x:Key="KindBrushFaint" Variant="Faint"/>

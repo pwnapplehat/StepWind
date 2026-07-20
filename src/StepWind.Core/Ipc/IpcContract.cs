@@ -30,6 +30,7 @@ public enum IpcCommand
     RunRetention = 8,
     GetRecentFiles = 9,   // distinct files with saved history, most-recently-changed first
     PurgeHistory = 10,    // delete stored versions now: "*" | "unprotected" | folder-or-file prefix
+    BrowseVersions = 11,  // folder-tree browse (Arg1 = prefix) or recursive search (Arg2 = query)
 }
 
 public sealed record IpcRequest
@@ -88,4 +89,20 @@ public sealed record RecentFileEntry
     public required string RelativePath { get; init; }
     public required DateTime LastCapturedUtc { get; init; }
     public required int VersionCount { get; init; }
+}
+
+/// <summary>
+/// One entry in the folder-navigable version browser: either a subfolder (drill in) or a file
+/// (show its history). Version/latest aggregate over everything beneath a folder.
+/// </summary>
+public sealed record BrowseEntry
+{
+    public required string Name { get; init; }
+    public required string RelativePath { get; init; }
+    public required bool IsFolder { get; init; }
+    public required int VersionCount { get; init; }
+    public required DateTime LastCapturedUtc { get; init; }
+
+    /// <summary>For folders: how many distinct files with history live beneath it.</summary>
+    public int FileCount { get; init; }
 }

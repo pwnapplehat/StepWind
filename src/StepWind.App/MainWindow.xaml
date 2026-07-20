@@ -151,7 +151,7 @@
 
       <Grid Grid.Row="1">
         <views:TimelineView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=timeline}"/>
-        <views:FilesView x:Name="Files" Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=files}"/>
+        <views:FilesView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=files}"/>
         <views:FoldersView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=folders}"/>
         <views:SettingsView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=settings}"/>
       </Grid>

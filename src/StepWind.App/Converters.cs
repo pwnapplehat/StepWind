@@ -5,6 +5,16 @@ using System.Windows.Media;
 
 namespace StepWind.App;
 
+/// <summary>Collapses when true, shows when false (for "all but the last breadcrumb" separators).</summary>
+public sealed class InverseBoolToVisibilityConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+        => value is true ? Visibility.Collapsed : Visibility.Visible;
+
+    public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
+
 /// <summary>Shows an element only when the bound view name equals the converter parameter.</summary>
 public sealed class ViewVisibilityConverter : IValueConverter
 {

@@ -108,6 +108,7 @@ public sealed class StepWindHost : IDisposable
                 IpcCommand.GetSettings => Ok(BuildSettings()),
                 IpcCommand.SetSettings => ApplySettings(request.Arg1 ?? ""),
                 IpcCommand.PurgeHistory => PurgeHistory(request.Arg1 ?? ""),
+                IpcCommand.BrowseVersions => Ok(BrowseVersions(request.Arg1 ?? "", request.Arg2, request.Limit)),
                 _ => IpcResponse.Fail("unsupported command"),
             };
         }
@@ -336,6 +337,93 @@ public sealed class StepWindHost : IDisposable
         }
 
         return list;
+    }
+
+    /// <summary>
+    /// Folder-navigable browse of the version store. With a search query, returns matching
+    /// FILES anywhere beneath <paramref name="prefix"/> (flat, most-recent first). Without one,
+    /// returns the IMMEDIATE children of the prefix: subfolders (with counts aggregated over
+    /// everything beneath) then files. Root ("") lists the top-level protected folders that
+    /// actually have history. Purely a read over the version log — cheap and lock-snapshotted.
+    /// </summary>
+    private List<BrowseEntry> BrowseVersions(string prefix, string? query, int limit)
+    {
+        string basePrefix = prefix.Replace('\\', '/').Trim('/');
+        int cap = limit <= 0 ? 500 : Math.Min(limit, 2000);
+
+        // Latest version per distinct file, restricted to what's under the prefix.
+        var files = _store.Log.All
+            .GroupBy(v => v.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Path: g.Key, Count: g.Count(), Last: g.Max(v => v.CapturedUtc)))
+            .Where(f => basePrefix.Length == 0
+                || f.Path.Equals(basePrefix, StringComparison.OrdinalIgnoreCase)
+                || f.Path.StartsWith(basePrefix + "/", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            string q = query.Trim();
+            return [.. files
+                .Where(f => f.Path.Contains(q, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(f => f.Last)
+                .Take(cap)
+                .Select(f => new BrowseEntry
+                {
+                    Name = LeafName(f.Path),
+                    RelativePath = f.Path,
+                    IsFolder = false,
+                    VersionCount = f.Count,
+                    LastCapturedUtc = f.Last,
+                })];
+        }
+
+        int depth = basePrefix.Length == 0 ? 0 : basePrefix.Split('/').Length;
+        var folders = new Dictionary<string, (int Versions, int Files, DateTime Last)>(StringComparer.OrdinalIgnoreCase);
+        var directFiles = new List<BrowseEntry>();
+
+        foreach ((string path, int count, DateTime last) in files)
+        {
+            string[] segs = path.Split('/');
+            if (segs.Length == depth + 1)
+            {
+                directFiles.Add(new BrowseEntry
+                {
+                    Name = segs[^1],
+                    RelativePath = path,
+                    IsFolder = false,
+                    VersionCount = count,
+                    LastCapturedUtc = last,
+                });
+            }
+            else if (segs.Length > depth + 1)
+            {
+                string childName = segs[depth];
+                string childPath = string.Join('/', segs.Take(depth + 1));
+                (int v, int fc, DateTime l) = folders.GetValueOrDefault(childPath, (0, 0, DateTime.MinValue));
+                folders[childPath] = (v + count, fc + 1, last > l ? last : l);
+            }
+        }
+
+        var result = new List<BrowseEntry>();
+        result.AddRange(folders
+            .OrderByDescending(kv => kv.Value.Last)
+            .Select(kv => new BrowseEntry
+            {
+                Name = LeafName(kv.Key),
+                RelativePath = kv.Key,
+                IsFolder = true,
+                VersionCount = kv.Value.Versions,
+                FileCount = kv.Value.Files,
+                LastCapturedUtc = kv.Value.Last,
+            }));
+        result.AddRange(directFiles.OrderByDescending(f => f.LastCapturedUtc));
+        return [.. result.Take(cap)];
+    }
+
+    private static string LeafName(string relativePath)
+    {
+        int slash = relativePath.LastIndexOf('/');
+        return slash < 0 ? relativePath : relativePath[(slash + 1)..];
     }
 
     /// <summary>Distinct protected files with history, most-recently-changed first (quick list).</summary>

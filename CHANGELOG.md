@@ -66,6 +66,15 @@ Initial release — an undo button for your whole PC.
   visual layer sits on standard accessible control plumbing, so keyboard navigation and
   screen readers keep working. A global panic hotkey — **Ctrl+Shift+Z** — opens StepWind
   from anywhere.
+- **File versions is a folder browser now, not one long list:** open a protected folder,
+  drill into any subfolder via breadcrumbs, and see version history scoped to what you picked
+  — built for deep dev trees (`Reports/Q1/…`, `Code/src/…`), not just a flat feed. Each
+  folder shows how many files and versions live beneath it; single-click drills in, and a
+  search box does a fast recursive find of files anywhere under the current folder. The old
+  flat "recently changed" list is gone in favour of this.
+- **Smooth, animated scrolling** everywhere (timeline, browser, history, settings) — real
+  pixel-based inertia-style easing instead of the default jump-by-a-few-rows, via an
+  attached behavior that animates the scroll offset with a cubic ease-out.
 - **Motion that feels premium, not busy:** views fade-and-rise on switch, list rows cascade
   in as they load, the active nav indicator grows into place, buttons/cards respond with
   smooth colour fades + a subtle press-scale and hover-lift, dialogs scale in, and the

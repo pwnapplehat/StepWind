@@ -87,13 +87,18 @@ searchable recently-changed list with full version history and one-click restore
 visual layer, standard accessible control plumbing underneath — keyboard navigation and
 screen readers keep working.
 
+**File versions is a folder browser.** Open a protected folder, drill into subfolders via
+breadcrumbs (built for deep dev trees, not a flat list), and restore any version of the file
+you pick. Each folder shows the files/versions beneath it; a search box does a fast recursive
+find. Scrolling is smooth and animated throughout.
+
 It's motion-polished, tastefully: views fade-and-rise on switch, rows cascade in, the active
 nav indicator grows into place, buttons and cards answer with smooth colour fades, a subtle
 press-scale and hover-lift, dialogs scale in, and the "protection active" dot has a gentle
 heartbeat — all opacity/transform only (render-thread composited), so it's fluid without
 taxing the machine.
 
-| File versions | Protected folders | Settings |
+| File versions (folder browser) | Protected folders | Settings |
 |---|---|---|
 | <img src="docs/screenshots/files.png" width="270"/> | <img src="docs/screenshots/folders.png" width="270"/> | <img src="docs/screenshots/settings.png" width="270"/> |
 

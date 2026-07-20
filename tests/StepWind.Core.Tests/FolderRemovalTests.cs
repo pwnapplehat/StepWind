@@ -244,6 +244,78 @@ public class FolderRemovalTests : IDisposable
         Assert.Contains("\"RetentionKeepAllHours\":72", resp.Json);
     }
 
+    [Fact]
+    public async Task Browse_navigates_the_store_as_a_folder_tree()
+    {
+        // Build a small tree under two protected roots.
+        Directory.CreateDirectory(Path.Combine(_folderA, "Work", "ProjectX"));
+        File.WriteAllText(Path.Combine(_folderA, "top.txt"), "top of Docs");
+        File.WriteAllText(Path.Combine(_folderA, "Work", "notes.txt"), "work notes");
+        File.WriteAllText(Path.Combine(_folderA, "Work", "ProjectX", "main.cs"), "code");
+        File.WriteAllText(Path.Combine(_folderB, "desk.txt"), "on the desk");
+        await WaitForVersions("Docs/top.txt", 1);
+        await WaitForVersions("Docs/Work/notes.txt", 1);
+        await WaitForVersions("Docs/Work/ProjectX/main.cs", 1);
+        await WaitForVersions("Desk/desk.txt", 1);
+
+        // Root lists the two protected folders as drill-in entries.
+        BrowseEntry[] root = Browse("", null);
+        Assert.Contains(root, e => e is { IsFolder: true, Name: "Docs" });
+        Assert.Contains(root, e => e is { IsFolder: true, Name: "Desk" });
+
+        // Into Docs: a subfolder "Work" plus the direct file "top.txt".
+        BrowseEntry[] docs = Browse("Docs", null);
+        BrowseEntry workFolder = Assert.Single(docs, e => e.IsFolder && e.Name == "Work");
+        Assert.Equal(2, workFolder.FileCount); // notes.txt + ProjectX/main.cs beneath
+        Assert.Contains(docs, e => e is { IsFolder: false, Name: "top.txt" });
+
+        // Into Docs/Work: subfolder ProjectX + file notes.txt.
+        BrowseEntry[] workChildren = Browse("Docs/Work", null);
+        Assert.Contains(workChildren, e => e is { IsFolder: true, Name: "ProjectX" });
+        Assert.Contains(workChildren, e => e is { IsFolder: false, Name: "notes.txt" });
+
+        // Leaf folder shows the file only.
+        BrowseEntry[] proj = Browse("Docs/Work/ProjectX", null);
+        Assert.Single(proj);
+        Assert.Equal("main.cs", proj[0].Name);
+        Assert.False(proj[0].IsFolder);
+    }
+
+    [Fact]
+    public async Task Browse_search_finds_files_recursively_under_the_current_folder()
+    {
+        Directory.CreateDirectory(Path.Combine(_folderA, "Work"));
+        File.WriteAllText(Path.Combine(_folderA, "Work", "budget.xlsx"), "numbers");
+        File.WriteAllText(Path.Combine(_folderA, "readme.txt"), "docs readme");
+        File.WriteAllText(Path.Combine(_folderB, "budget-desk.xlsx"), "other numbers");
+        await WaitForVersions("Docs/Work/budget.xlsx", 1);
+        await WaitForVersions("Docs/readme.txt", 1);
+        await WaitForVersions("Desk/budget-desk.xlsx", 1);
+
+        // Global search from root matches both budgets.
+        BrowseEntry[] all = Browse("", "budget");
+        Assert.Equal(2, all.Length);
+        Assert.All(all, e => Assert.False(e.IsFolder));
+
+        // Scoped search under Docs only matches the one beneath Docs.
+        BrowseEntry[] scoped = Browse("Docs", "budget");
+        Assert.Single(scoped);
+        Assert.Equal("Docs/Work/budget.xlsx", scoped[0].RelativePath);
+    }
+
+    private BrowseEntry[] Browse(string prefix, string? query)
+    {
+        IpcResponse resp = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.BrowseVersions,
+            Arg1 = prefix,
+            Arg2 = query,
+            Limit = 500,
+        });
+        Assert.True(resp.Ok);
+        return JsonSerializer.Deserialize<BrowseEntry[]>(resp.Json!)!;
+    }
+
     public void Dispose()
     {
         _host.Dispose();

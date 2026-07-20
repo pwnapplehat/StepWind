@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using StepWind.App.ViewModels;
 
 namespace StepWind.App.Views;
@@ -14,11 +15,49 @@ public partial class FilesView : UserControl
 
     private MainViewModel Vm => (MainViewModel)DataContext;
 
-    private async void OnRecentFileSelected(object sender, SelectionChangedEventArgs e)
+    /// <summary>
+    /// Single click opens the row: a folder drills in, a file loads its history — the snappy,
+    /// modern behavior (no hunting for double-click). Resolved from the clicked element so a
+    /// click on padding or the scrollbar does nothing.
+    /// </summary>
+    private async void OnEntryClick(object sender, MouseButtonEventArgs e)
     {
-        if (RecentList.SelectedItem is RecentFileRow row)
+        if (RowFrom(e.OriginalSource) is { } row)
         {
-            await Vm.LoadHistoryAsync(row.RelativePath);
+            await Vm.OpenBrowseRowAsync(row);
+        }
+    }
+
+    private async void OnEntryKey(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Enter or Key.Right && BrowseList.SelectedItem is BrowseRow row)
+        {
+            await Vm.OpenBrowseRowAsync(row);
+        }
+        else if (e.Key is Key.Back or Key.Left)
+        {
+            await Vm.GoUpAsync();
+        }
+    }
+
+    private static BrowseRow? RowFrom(object source)
+    {
+        DependencyObject? d = source as DependencyObject;
+        while (d is not null and not ListBoxItem)
+        {
+            d = System.Windows.Media.VisualTreeHelper.GetParent(d);
+        }
+
+        return (d as ListBoxItem)?.DataContext as BrowseRow;
+    }
+
+    private async void OnGoUp(object sender, RoutedEventArgs e) => await Vm.GoUpAsync();
+
+    private async void OnCrumb(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is string path)
+        {
+            await Vm.BrowseToAsync(path);
         }
     }
 
@@ -26,7 +65,7 @@ public partial class FilesView : UserControl
     {
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "Pick a file to see its version history",
+            Title = "Open a file to see its version history",
             CheckFileExists = false, // deleted files still have history
         };
         if (dialog.ShowDialog() == true)
@@ -63,7 +102,7 @@ public partial class FilesView : UserControl
         }
 
         string msg = await Vm.PurgeHistoryAsync(target);
-        Vm.History.Clear();
+        Vm.ClearHistorySelection();
         SwDialog.Notice(Window.GetWindow(this)!, "History deleted", msg);
     }
 }

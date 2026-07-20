@@ -1,7 +1,8 @@
 <UserControl x:Class="StepWind.App.Views.FoldersView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:app="clr-namespace:StepWind.App">
   <Grid Margin="28,4,28,20">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
@@ -42,7 +43,7 @@
     </Border>
 
     <!-- Folder cards -->
-    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" app:SmoothScroll.Enabled="True">
       <ItemsControl ItemsSource="{Binding WatchedFolders}">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>

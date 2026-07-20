@@ -39,12 +39,22 @@ public sealed class VersionRow
     public required string VersionId { get; init; }
 }
 
-/// <summary>A recently-changed protected file for the quick-pick list.</summary>
-public sealed class RecentFileRow
+/// <summary>A row in the folder-navigable version browser (a subfolder or a file).</summary>
+public sealed class BrowseRow
 {
+    public required string Name { get; init; }
     public required string RelativePath { get; init; }
-    public required string DisplayName { get; init; }
+    public required bool IsFolder { get; init; }
     public required string Detail { get; init; }
+    public string Glyph => IsFolder ? "\uE8B7" : "\uE8A5"; // Segoe MDL2: Folder / Document
+}
+
+/// <summary>A clickable breadcrumb segment in the version browser.</summary>
+public sealed class Crumb
+{
+    public required string Label { get; init; }
+    public required string Path { get; init; }
+    public required bool IsLast { get; init; }
 }
 
 /// <summary>
@@ -63,7 +73,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _historyTitle = DefaultHistoryTitle;
     private string _currentView = "timeline";
     private string _timelineFilter = "All";
-    private string _recentSearch = "";
     private bool _autoUpdateEnabled = true;
     private bool _encryptionOn;
     private bool _flightRecorderOn;
@@ -93,10 +102,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return !_timelineProtectedOnly || RowIsInProtectedFolder(r);
         };
 
-        RecentView = CollectionViewSource.GetDefaultView(RecentFiles);
-        RecentView.Filter = o =>
-            string.IsNullOrWhiteSpace(_recentSearch)
-            || (o is RecentFileRow f && f.RelativePath.Contains(_recentSearch, StringComparison.OrdinalIgnoreCase));
+        BuildBreadcrumbs(); // "Home" is present before the first browse loads
 
         _refreshTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3) };
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
@@ -108,15 +114,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public ObservableCollection<VersionRow> History { get; } = [];
 
-    public ObservableCollection<RecentFileRow> RecentFiles { get; } = [];
+    public ObservableCollection<BrowseRow> BrowseEntries { get; } = [];
+
+    public ObservableCollection<Crumb> Breadcrumbs { get; } = [];
 
     public ObservableCollection<string> WatchedFolders { get; } = [];
 
     /// <summary>Grouped (by day) + filtered view the timeline list binds to.</summary>
     public ICollectionView TimelineView { get; }
-
-    /// <summary>Search-filtered view of the recent files list.</summary>
-    public ICollectionView RecentView { get; }
 
     public string CurrentView
     {
@@ -174,14 +179,135 @@ public sealed class MainViewModel : INotifyPropertyChanged
         return false;
     }
 
-    public string RecentSearch
+    // ── Folder-navigable version browser ────────────────────────────────────────────
+    private string _browsePath = "";
+    private string _browseSearch = "";
+    private string _browseFingerprint = "";
+
+    /// <summary>Search box in File versions: non-empty ⇒ recursive file search under the current folder.</summary>
+    public string BrowseSearch
     {
-        get => _recentSearch;
+        get => _browseSearch;
         set
         {
-            _recentSearch = value;
+            if (_browseSearch == value)
+            {
+                return;
+            }
+
+            _browseSearch = value;
             OnChanged();
-            RecentView.Refresh();
+            _browseFingerprint = ""; // content shape changes → allow rebuild
+            _ = RefreshBrowseAsync();
+        }
+    }
+
+    public string BrowsePathDisplay => _browsePath.Length == 0 ? "All protected folders" : _browsePath;
+
+    public bool CanGoUp => _browsePath.Length > 0;
+
+    /// <summary>Loads the immediate children of a folder (or root) and rebuilds the breadcrumb.</summary>
+    public async Task BrowseToAsync(string prefix)
+    {
+        _browsePath = prefix.Replace('\\', '/').Trim('/');
+        _browseSearch = "";
+        OnChanged(nameof(BrowseSearch));
+        OnChanged(nameof(BrowsePathDisplay));
+        OnChanged(nameof(CanGoUp));
+        BuildBreadcrumbs();
+        _browseFingerprint = "";
+        await RefreshBrowseAsync();
+    }
+
+    public async Task GoUpAsync()
+    {
+        if (_browsePath.Length == 0)
+        {
+            return;
+        }
+
+        int slash = _browsePath.LastIndexOf('/');
+        await BrowseToAsync(slash < 0 ? "" : _browsePath[..slash]);
+    }
+
+    /// <summary>Opens a browser row: drill into a folder, or load a file's history.</summary>
+    public async Task OpenBrowseRowAsync(BrowseRow row)
+    {
+        if (row.IsFolder)
+        {
+            await BrowseToAsync(row.RelativePath);
+        }
+        else
+        {
+            await LoadHistoryAsync(row.RelativePath);
+        }
+    }
+
+    /// <summary>Re-queries the current browse folder/search; skips the UI rebuild if unchanged.</summary>
+    public async Task RefreshBrowseAsync()
+    {
+        var req = new IpcRequest
+        {
+            Command = IpcCommand.BrowseVersions,
+            Arg1 = _browsePath,
+            Arg2 = string.IsNullOrWhiteSpace(_browseSearch) ? null : _browseSearch,
+            Limit = 500,
+        };
+        IpcResponse resp = await _pipe.SendAsync(req);
+        if (!resp.Ok || resp.Json is null)
+        {
+            return;
+        }
+
+        if (resp.Json == _browseFingerprint)
+        {
+            return; // nothing changed — don't disturb the list
+        }
+
+        _browseFingerprint = resp.Json;
+        BrowseEntry[] entries = JsonSerializer.Deserialize<BrowseEntry[]>(resp.Json) ?? [];
+        BrowseEntries.Clear();
+        foreach (BrowseEntry e in entries)
+        {
+            BrowseEntries.Add(new BrowseRow
+            {
+                Name = e.Name,
+                RelativePath = e.RelativePath,
+                IsFolder = e.IsFolder,
+                Detail = e.IsFolder
+                    ? $"{e.FileCount} file{(e.FileCount == 1 ? "" : "s")} · {e.VersionCount} version{(e.VersionCount == 1 ? "" : "s")}"
+                    : $"{e.VersionCount} version{(e.VersionCount == 1 ? "" : "s")} · {e.LastCapturedUtc.ToLocalTime():MMM d, HH:mm}",
+            });
+        }
+
+        OnChanged(nameof(BrowseIsEmpty));
+        OnChanged(nameof(BrowseIsSearch));
+    }
+
+    public bool BrowseIsEmpty => BrowseEntries.Count == 0;
+
+    public bool BrowseIsSearch => !string.IsNullOrWhiteSpace(_browseSearch);
+
+    private void BuildBreadcrumbs()
+    {
+        Breadcrumbs.Clear();
+        Breadcrumbs.Add(new Crumb { Label = "Home", Path = "", IsLast = _browsePath.Length == 0 });
+        if (_browsePath.Length == 0)
+        {
+            return;
+        }
+
+        string[] segs = _browsePath.Split('/');
+        var acc = new List<string>();
+        for (int i = 0; i < segs.Length; i++)
+        {
+            acc.Add(segs[i]);
+            Breadcrumbs.Add(new Crumb
+            {
+                Label = segs[i],
+                Path = string.Join('/', acc),
+                IsLast = i == segs.Length - 1,
+            });
         }
     }
 
@@ -324,7 +450,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
         }
         await LoadTimelineAsync();
-        await LoadRecentFilesAsync();
+        await RefreshBrowseAsync();
         if (!string.IsNullOrWhiteSpace(_historyPath))
         {
             await LoadHistoryAsync(_historyPath);
@@ -350,38 +476,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
             ? "No folders protected yet"
             : $"Protecting {roots} folder{(roots == 1 ? "" : "s")} · {versions:N0} versions · {FormatSize(Math.Max(0, _storeBytes))}";
         return roots;
-    }
-
-    private string _recentFingerprint = "";
-
-    public async Task LoadRecentFilesAsync()
-    {
-        IpcResponse resp = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetRecentFiles, Limit = 100 });
-        if (!resp.Ok || resp.Json is null)
-        {
-            return;
-        }
-
-        // The auto-refresh timer calls this every few seconds; rebuilding the list resets the
-        // user's selection and scroll, so only touch it when the content actually changed.
-        if (resp.Json == _recentFingerprint)
-        {
-            return;
-        }
-
-        _recentFingerprint = resp.Json;
-        RecentFileEntry[] files = JsonSerializer.Deserialize<RecentFileEntry[]>(resp.Json) ?? [];
-        RecentFiles.Clear();
-        foreach (RecentFileEntry f in files)
-        {
-            string name = f.RelativePath.Contains('/') ? f.RelativePath[(f.RelativePath.LastIndexOf('/') + 1)..] : f.RelativePath;
-            RecentFiles.Add(new RecentFileRow
-            {
-                RelativePath = f.RelativePath,
-                DisplayName = name,
-                Detail = $"{f.RelativePath} · {f.VersionCount} version{(f.VersionCount == 1 ? "" : "s")} · {f.LastCapturedUtc.ToLocalTime():MMM d, HH:mm}",
-            });
-        }
     }
 
     public async Task LoadSettingsAsync()
@@ -542,7 +636,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         using JsonDocument doc = JsonDocument.Parse(resp.Json);
         int versions = doc.RootElement.GetProperty("RemovedVersions").GetInt32();
         int blobs = doc.RootElement.GetProperty("SweptBlobs").GetInt32();
-        _recentFingerprint = ""; // force the recent list to rebuild
+        _browseFingerprint = ""; // force the browser to rebuild after a purge
         await RefreshAsync();
         return $"Deleted {versions:N0} version{(versions == 1 ? "" : "s")} and freed {blobs:N0} stored chunk{(blobs == 1 ? "" : "s")}.";
     }
@@ -628,17 +722,39 @@ public sealed class MainViewModel : INotifyPropertyChanged
             : local.ToString("MMMM d, yyyy");
     }
 
+    private bool _hasHistorySelection;
+
+    /// <summary>True once a file is selected in the browser — gates the "delete this file's history" button.</summary>
+    public bool HasHistorySelection
+    {
+        get => _hasHistorySelection;
+        private set { _hasHistorySelection = value; OnChanged(); }
+    }
+
+    private string _historyFingerprint = "";
+
     public async Task LoadHistoryAsync(string relativePath)
     {
+        bool switchingFile = !string.Equals(relativePath, HistoryPath, StringComparison.OrdinalIgnoreCase);
         HistoryPath = relativePath;
         HistoryTitle = relativePath;
+        HasHistorySelection = true;
         IpcResponse resp = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = relativePath });
-        History.Clear();
         if (!resp.Ok || resp.Json is null)
         {
             return;
         }
 
+        // Don't rebuild the list on the 3s auto-refresh when nothing changed — it would reset
+        // the user's scroll/selection. A file switch always rebuilds.
+        string fp = relativePath + "\u0001" + resp.Json;
+        if (!switchingFile && fp == _historyFingerprint)
+        {
+            return;
+        }
+
+        _historyFingerprint = fp;
+        History.Clear();
         foreach (VersionEntry v in JsonSerializer.Deserialize<VersionEntry[]>(resp.Json) ?? [])
         {
             History.Add(new VersionRow
@@ -649,6 +765,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 VersionId = v.VersionId,
             });
         }
+    }
+
+    /// <summary>Clears the version-history pane (after the selected file's history is deleted).</summary>
+    public void ClearHistorySelection()
+    {
+        History.Clear();
+        HistoryPath = "";
+        HistoryTitle = DefaultHistoryTitle;
+        HasHistorySelection = false;
+        _historyFingerprint = "";
     }
 
     public async Task<string> ReverseAsync(TimelineRow row)
