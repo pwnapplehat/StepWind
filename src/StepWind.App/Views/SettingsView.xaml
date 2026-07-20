@@ -115,11 +115,91 @@
                            Foreground="{StaticResource SW.Text}"/>
                 <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
                            TextWrapping="Wrap"
-                           Text="Deduplicated and compressed. Retention keeps everything for 48 hours, hourly for a week, daily for six months — old versions are garbage-collected automatically."/>
+                           Text="Deduplicated and compressed — old versions are garbage-collected automatically per the retention rules below."/>
               </StackPanel>
               <TextBlock Grid.Column="1" Text="{Binding StorageText}" Margin="16,0,0,0"
                          FontFamily="{StaticResource SW.Font}" FontSize="14" FontWeight="SemiBold"
                          Foreground="{StaticResource SW.Cyan}" VerticalAlignment="Center"/>
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <TextBlock Text="Retention" Style="{StaticResource SW.SectionLabel}" Margin="2,18,0,8"/>
+        <Border Style="{StaticResource SW.CardStyle}" Padding="16,13">
+          <StackPanel>
+            <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" TextWrapping="Wrap"
+                       Text="How long versions are kept. Everything is kept for the first window, then thinned to hourly and daily as versions age."/>
+            <UniformGrid Columns="5" Margin="0,10,0,0">
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Keep all (hours)" FontSize="11" Foreground="{StaticResource SW.Text2}"/>
+                <TextBox Style="{StaticResource SW.TextBox}" Margin="0,5,0,0"
+                         Text="{Binding RetentionKeepAllHours, UpdateSourceTrigger=PropertyChanged}"/>
+              </StackPanel>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Hourly (days)" FontSize="11" Foreground="{StaticResource SW.Text2}"/>
+                <TextBox Style="{StaticResource SW.TextBox}" Margin="0,5,0,0"
+                         Text="{Binding RetentionHourlyDays, UpdateSourceTrigger=PropertyChanged}"/>
+              </StackPanel>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Daily (days)" FontSize="11" Foreground="{StaticResource SW.Text2}"/>
+                <TextBox Style="{StaticResource SW.TextBox}" Margin="0,5,0,0"
+                         Text="{Binding RetentionDailyDays, UpdateSourceTrigger=PropertyChanged}"/>
+              </StackPanel>
+              <StackPanel Margin="0,0,10,0">
+                <TextBlock Text="Max age (days)" FontSize="11" Foreground="{StaticResource SW.Text2}"/>
+                <TextBox Style="{StaticResource SW.TextBox}" Margin="0,5,0,0"
+                         Text="{Binding RetentionMaxAgeDays, UpdateSourceTrigger=PropertyChanged}"/>
+              </StackPanel>
+              <StackPanel>
+                <TextBlock Text="Max per file" FontSize="11" Foreground="{StaticResource SW.Text2}"/>
+                <TextBox Style="{StaticResource SW.TextBox}" Margin="0,5,0,0"
+                         Text="{Binding RetentionMaxVersionsPerFile, UpdateSourceTrigger=PropertyChanged}"/>
+              </StackPanel>
+            </UniformGrid>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+              <Button Style="{StaticResource SW.Button}" Content="Run cleanup now" Click="OnRunRetention"
+                      ToolTip="Apply the retention rules immediately instead of waiting for the daily pass"/>
+              <Button Style="{StaticResource SW.Button.Primary}" Content="Apply" Margin="10,0,0,0"
+                      MinWidth="90" Click="OnApplyRetention"/>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <TextBlock Text="Data management" Style="{StaticResource SW.SectionLabel}" Margin="2,18,0,8"/>
+        <Border Style="{StaticResource SW.CardStyle}" Padding="16,13">
+          <StackPanel>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Clean up unprotected history" FontSize="13" FontWeight="Medium"
+                           Foreground="{StaticResource SW.Text}"/>
+                <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
+                           TextWrapping="Wrap"
+                           Text="Deletes saved versions belonging to folders you no longer protect."/>
+              </StackPanel>
+              <Button Grid.Column="1" Style="{StaticResource SW.Button}" Content="Clean up"
+                      VerticalAlignment="Center" Click="OnPurgeUnprotected"/>
+            </Grid>
+
+            <Rectangle Height="1" Fill="{StaticResource SW.StrokeSoft}" Margin="0,12"/>
+
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Delete all history" FontSize="13" FontWeight="Medium"
+                           Foreground="{StaticResource SW.Danger}"/>
+                <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
+                           TextWrapping="Wrap"
+                           Text="Permanently deletes every saved version of every file and frees the disk space. Your actual files are not touched."/>
+              </StackPanel>
+              <Button Grid.Column="1" Style="{StaticResource SW.Button.Danger}" Content="Delete all…"
+                      VerticalAlignment="Center" Click="OnPurgeAll"/>
             </Grid>
           </StackPanel>
         </Border>

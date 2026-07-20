@@ -29,6 +29,7 @@ public enum IpcCommand
     SetSettings = 7,
     RunRetention = 8,
     GetRecentFiles = 9,   // distinct files with saved history, most-recently-changed first
+    PurgeHistory = 10,    // delete stored versions now: "*" | "unprotected" | folder-or-file prefix
 }
 
 public sealed record IpcRequest

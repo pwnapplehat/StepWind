@@ -37,6 +37,17 @@ public sealed class StepWindSettings
 
     public RetentionPolicy Retention { get; set; } = new();
 
+    /// <summary>
+    /// True once a human has made any protected-folders decision. The GUI seeds default
+    /// folders ONLY while this is false — without it, a user who deliberately removed
+    /// everything got the defaults silently re-added on the next launch (the "I removed
+    /// Desktop but it came back" bug).
+    /// </summary>
+    public bool FirstRunCompleted { get; set; }
+
+    /// <summary>Timeline display scope: true = only operations inside protected folders.</summary>
+    public bool TimelineProtectedOnly { get; set; }
+
     public static string DefaultRoot =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StepWind");
 

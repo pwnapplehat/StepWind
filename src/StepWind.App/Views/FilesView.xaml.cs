@@ -36,7 +36,30 @@ public partial class FilesView : UserControl
         if ((sender as FrameworkElement)?.DataContext is VersionRow row)
         {
             string msg = await Vm.RestoreAsync(row);
-            MessageBox.Show(msg, "StepWind — Restore", MessageBoxButton.OK, MessageBoxImage.Information);
+            SwDialog.Notice(Window.GetWindow(this)!, "Restore", msg);
         }
+    }
+
+    /// <summary>Deletes the selected file's entire saved history (asks first).</summary>
+    private async void OnDeleteFileHistory(object sender, RoutedEventArgs e)
+    {
+        string target = Vm.HistoryPath;
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return;
+        }
+
+        SwDialog.Choice c = SwDialog.Confirm(Window.GetWindow(this)!,
+            "Delete this file's history?",
+            $"{target}\n\nEvery saved version of this file will be permanently deleted. The file itself on disk is not touched.",
+            "Delete history", danger: true);
+        if (c != SwDialog.Choice.Primary)
+        {
+            return;
+        }
+
+        string msg = await Vm.PurgeHistoryAsync(target);
+        Vm.History.Clear();
+        SwDialog.Notice(Window.GetWindow(this)!, "History deleted", msg);
     }
 }

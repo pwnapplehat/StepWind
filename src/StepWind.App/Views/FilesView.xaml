@@ -94,8 +94,14 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
-          <TextBlock Text="Version history" Style="{StaticResource SW.SectionLabel}"
-                     Margin="16,14,16,8"/>
+          <Grid Margin="16,12,10,8">
+            <TextBlock Text="Version history" Style="{StaticResource SW.SectionLabel}"
+                       VerticalAlignment="Center"/>
+            <Button Style="{StaticResource SW.Button.Ghost}" Padding="8,4" HorizontalAlignment="Right"
+                    Click="OnDeleteFileHistory" ToolTip="Delete every saved version of this file">
+              <ui:SymbolIcon Symbol="Delete24" FontSize="13" Foreground="{StaticResource SW.Danger}"/>
+            </Button>
+          </Grid>
           <TextBlock Grid.Row="1" Text="{Binding HistoryTitle}" FontSize="11.5" Margin="16,0,16,10"
                      Foreground="{StaticResource SW.Text2}" TextWrapping="Wrap"/>
           <ListBox Grid.Row="2" Style="{StaticResource SW.List}" ItemsSource="{Binding History}"

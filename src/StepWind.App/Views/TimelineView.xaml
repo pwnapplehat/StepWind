@@ -25,21 +25,31 @@
       </Button>
     </Grid>
 
-    <!-- Kind filter chips -->
-    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,16,0,14">
-      <RadioButton Style="{StaticResource SW.Chip}" Content="All" IsChecked="True"
-                   GroupName="TlFilter" Click="OnFilter" Tag="All"/>
-      <RadioButton Style="{StaticResource SW.Chip}" Content="Moves" Margin="8,0,0,0"
-                   GroupName="TlFilter" Click="OnFilter" Tag="Move"/>
-      <RadioButton Style="{StaticResource SW.Chip}" Content="Renames" Margin="8,0,0,0"
-                   GroupName="TlFilter" Click="OnFilter" Tag="Rename"/>
-      <RadioButton Style="{StaticResource SW.Chip}" Content="Deletes" Margin="8,0,0,0"
-                   GroupName="TlFilter" Click="OnFilter" Tag="Delete"/>
-      <RadioButton Style="{StaticResource SW.Chip}" Content="Created" Margin="8,0,0,0"
-                   GroupName="TlFilter" Click="OnFilter" Tag="Create"/>
-      <RadioButton Style="{StaticResource SW.Chip}" Content="Changed" Margin="8,0,0,0"
-                   GroupName="TlFilter" Click="OnFilter" Tag="Modify"/>
-    </StackPanel>
+    <!-- Kind filter chips + scope -->
+    <Grid Grid.Row="1" Margin="0,16,0,14">
+      <StackPanel Orientation="Horizontal">
+        <RadioButton Style="{StaticResource SW.Chip}" Content="All" IsChecked="True"
+                     GroupName="TlFilter" Click="OnFilter" Tag="All"/>
+        <RadioButton Style="{StaticResource SW.Chip}" Content="Moves" Margin="8,0,0,0"
+                     GroupName="TlFilter" Click="OnFilter" Tag="Move"/>
+        <RadioButton Style="{StaticResource SW.Chip}" Content="Renames" Margin="8,0,0,0"
+                     GroupName="TlFilter" Click="OnFilter" Tag="Rename"/>
+        <RadioButton Style="{StaticResource SW.Chip}" Content="Deletes" Margin="8,0,0,0"
+                     GroupName="TlFilter" Click="OnFilter" Tag="Delete"/>
+        <RadioButton Style="{StaticResource SW.Chip}" Content="Created" Margin="8,0,0,0"
+                     GroupName="TlFilter" Click="OnFilter" Tag="Create"/>
+        <RadioButton Style="{StaticResource SW.Chip}" Content="Changed" Margin="8,0,0,0"
+                     GroupName="TlFilter" Click="OnFilter" Tag="Modify"/>
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <RadioButton x:Name="ScopeAll" Style="{StaticResource SW.Chip}" Content="All drives"
+                     GroupName="TlScope" Click="OnScope" Tag="all"
+                     ToolTip="Show every file operation the flight recorder sees, on all NTFS drives"/>
+        <RadioButton x:Name="ScopeProtected" Style="{StaticResource SW.Chip}" Content="Protected only"
+                     Margin="8,0,0,0" GroupName="TlScope" Click="OnScope" Tag="protected"
+                     ToolTip="Show only operations inside your protected folders"/>
+      </StackPanel>
+    </Grid>
 
     <!-- The time river -->
     <Border Grid.Row="2" Style="{StaticResource SW.CardStyle}">

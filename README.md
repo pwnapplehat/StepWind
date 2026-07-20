@@ -63,6 +63,9 @@ a lightly-edited 2 GB file doesn't cost 2 GB per save.
 - **Restores never overwrite** — a recovered version lands beside your current work, never on top.
 - **Reversal is guarded** — it refuses to move something back onto a now-occupied path.
 - **Panic hotkey** — Ctrl+Shift+Z opens StepWind from anywhere the instant something goes wrong.
+- **Your data, your controls** — removing a folder asks whether to keep or delete its saved
+  versions; Settings has delete-all, clean-up-unprotected, and run-cleanup-now (all confirmed
+  first); retention windows are editable; the timeline can be scoped to protected folders only.
 - **Smart exclusions** — build junk (`node_modules`, `target`…), caches, and — importantly —
   OneDrive online-only files are skipped (versioning a placeholder would force a full download).
   Files held under an *exclusive* lock (e.g. an open Outlook PST) are captured when the app
@@ -102,7 +105,7 @@ tests/                 deterministic Core tests
 
 ## Verified
 
-- **76 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+- **84 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
   integrity, encryption round-trip & tamper rejection, DPAPI key stability, live encryption
   toggling (mixed-store reads, background re-encode convergence in both directions,
   interrupted-migration recovery, storage byte tracking, the IPC toggle end-to-end), USN
@@ -110,8 +113,10 @@ tests/                 deterministic Core tests
   detected at the marker-rename instant, with the late FileDelete deduplicated and hex-named
   user files never misclassified), version-level dedup of identical re-saves, startup
   reconciliation (baseline + catch-up + idempotency), GC-vs-capture interleaving integrity,
-  reversal safety, retention tiers + GC, exclusions (incl. cloud placeholders), watch
-  capture, and the full IPC capture→history→restore round-trip.
+  reversal safety, retention tiers + GC (and configurable retention with clamping), folder
+  removal (captures stop, nothing reseeds, purge all/unprotected/folder/file), exclusions
+  (incl. cloud placeholders), watch capture, and the full IPC capture→history→restore
+  round-trip.
 - **Real-hardware E2E** (elevated): a scripted create/rename/move/delete is reconstructed
   from the live journal, the move is reversed (folder back in one click), and a version is
   restored byte-exact after overwrite+delete — all through the production classes. The

@@ -19,8 +19,28 @@ return args.FirstOrDefault()?.ToLowerInvariant() switch
     "settings" => DumpSettings(),
     "recent" => DumpRecent(),
     "set-encryption" => SetEncryption(args.ElementAtOrDefault(1)),
+    "purge" => Purge(args.ElementAtOrDefault(1)),
     _ => Help(),
 };
+
+// Deletes stored history on the running service: purge "*" | unprotected | <prefix>.
+static int Purge(string? selector)
+{
+    if (string.IsNullOrWhiteSpace(selector))
+    {
+        Console.WriteLine("usage: stepwind-cli purge \"*\"|unprotected|<folder-or-file-prefix>");
+        return 1;
+    }
+
+    var client = new StepWind.Core.Ipc.PipeClient();
+    StepWind.Core.Ipc.IpcResponse r = client.SendAsync(new StepWind.Core.Ipc.IpcRequest
+    {
+        Command = StepWind.Core.Ipc.IpcCommand.PurgeHistory,
+        Arg1 = selector,
+    }).GetAwaiter().GetResult();
+    Console.WriteLine(r.Ok ? r.Json : "ERR: " + r.Error);
+    return r.Ok ? 0 : 1;
+}
 
 // Toggles store encryption on the running service (diagnostic; the GUI has a switch).
 static int SetEncryption(string? state)

@@ -21,9 +21,30 @@ public partial class FoldersView : UserControl
 
     private async void OnRemoveFolder(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is string folder)
+        if ((sender as FrameworkElement)?.DataContext is not string folder)
         {
-            await Vm.RemoveWatchedFolderAsync(folder);
+            return;
+        }
+
+        // The professional ask: removal must be an explicit decision about the DATA, not
+        // just the watching. Keep = versions stay restorable; Delete = gone now.
+        SwDialog.Choice choice = SwDialog.ThreeChoice(
+            Window.GetWindow(this)!,
+            "Stop protecting this folder?",
+            $"{folder}\n\nNew changes will no longer be captured. What should happen to the versions already saved for this folder?",
+            "Keep history",
+            "Delete history");
+
+        if (choice == SwDialog.Choice.Cancel)
+        {
+            return;
+        }
+
+        await Vm.RemoveWatchedFolderAsync(folder);
+        if (choice == SwDialog.Choice.Secondary)
+        {
+            string msg = await Vm.PurgeHistoryAsync(ViewModels.MainViewModel.FolderSelector(folder));
+            SwDialog.Notice(Window.GetWindow(this)!, "History deleted", msg);
         }
     }
 }

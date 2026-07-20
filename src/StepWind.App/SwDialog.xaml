@@ -1,0 +1,25 @@
+<Window x:Class="StepWind.App.SwDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" SizeToContent="Height" Width="440"
+        Background="Transparent" AllowsTransparency="True"
+        FontFamily="{StaticResource SW.Font.Text}">
+  <Border Background="{StaticResource SW.Card}" CornerRadius="12" BorderThickness="1"
+          BorderBrush="{StaticResource SW.Stroke}" Padding="22,18">
+    <StackPanel>
+      <TextBlock x:Name="TitleText" FontFamily="{StaticResource SW.Font}" FontSize="16"
+                 FontWeight="SemiBold" Foreground="{StaticResource SW.Text}"/>
+      <TextBlock x:Name="MessageText" FontSize="12.5" Foreground="{StaticResource SW.Text2}"
+                 TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="19"/>
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+        <Button x:Name="CancelButton" Style="{StaticResource SW.Button.Ghost}" Content="Cancel"
+                MinWidth="84" Click="OnCancel"/>
+        <Button x:Name="SecondaryButton" Style="{StaticResource SW.Button.Danger}" Margin="10,0,0,0"
+                MinWidth="110" Click="OnSecondary" Visibility="Collapsed"/>
+        <Button x:Name="PrimaryButton" Style="{StaticResource SW.Button.Primary}" Margin="10,0,0,0"
+                MinWidth="110" Click="OnPrimary"/>
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</Window>

@@ -27,11 +27,26 @@ Initial release — an undo button for your whole PC.
   and dates is not.
 - **Storage visibility:** Settings and the status footer show exactly what the history
   costs on disk (live byte tracking — no directory rescans), alongside the version count.
-- **Removing a protected folder never deletes its history:** it only stops new captures —
-  everything already saved stays restorable from File versions until retention ages it out
-  (and the Folders page says so). Restores of files whose folder is no longer protected
-  land in `Public Documents\StepWind Restored` — an earlier build dropped them inside the
+- **Removing a protected folder is a real decision, honored forever:** removal stops new
+  captures instantly (verified live on the running service), and the app asks what to do
+  with the already-saved versions — **Keep history** (restorable until retention ages it
+  out) or **Delete history** (gone now, disk space freed). Fixed the bug that made removal
+  look broken: when the folder list became empty the GUI silently re-seeded the default
+  folders (Documents/Desktop/Pictures) on the next launch — a "first run completed" flag
+  now records that a human made a choice, so removed folders never come back on their own.
+  Restores of files whose folder is no longer protected land in
+  `Public Documents\StepWind Restored` — an earlier build dropped them inside the
   ACL-locked store where a standard user couldn't open their own recovered file.
+- **Your data, your controls (Settings → Data management):** delete ALL history, clean up
+  history belonging to no-longer-protected folders, run the retention cleanup on demand,
+  and delete a single file's history from its version pane — every destructive action
+  confirmed first in the app's own dialogs, every one reports exactly what it removed.
+- **Retention is configurable:** keep-all window, hourly/daily thinning, hard age cap, and
+  max versions per file are editable in Settings (values clamped to sane floors so a typo
+  can't wipe history).
+- **Timeline scope control:** switch the timeline between "All drives" (the full flight
+  recorder) and "Protected only" — so after you stop protecting a folder, you can choose
+  not to see its churn either. Persisted like every other setting.
 - **Reliability from day one:** startup reconciliation captures whatever changed or appeared
   while StepWind wasn't running (and baselines newly added folders immediately); USN
   journal-wrap detection resyncs instead of silently missing changes; an overflowed watcher

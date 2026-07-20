@@ -24,6 +24,10 @@ public sealed class TimelineRow
     public string? ByProcess { get; init; }
     public bool Reversible { get; init; }
     public required string OperationId { get; init; }
+
+    /// <summary>Raw paths (not displayed) so the "protected folders only" scope can filter.</summary>
+    public string? OldPath { get; init; }
+    public string? NewPath { get; init; }
 }
 
 /// <summary>A row in a file's version history.</summary>
@@ -75,7 +79,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
         TimelineView = CollectionViewSource.GetDefaultView(Timeline);
         TimelineView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(TimelineRow.Day)));
         TimelineView.Filter = o =>
-            _timelineFilter == "All" || (o is TimelineRow r && r.Kind == _timelineFilter);
+        {
+            if (o is not TimelineRow r)
+            {
+                return false;
+            }
+
+            if (_timelineFilter != "All" && r.Kind != _timelineFilter)
+            {
+                return false;
+            }
+
+            return !_timelineProtectedOnly || RowIsInProtectedFolder(r);
+        };
 
         RecentView = CollectionViewSource.GetDefaultView(RecentFiles);
         RecentView.Filter = o =>
@@ -118,6 +134,44 @@ public sealed class MainViewModel : INotifyPropertyChanged
             OnChanged();
             TimelineView.Refresh();
         }
+    }
+
+    private bool _timelineProtectedOnly;
+
+    /// <summary>Timeline scope: false = all drives (full flight recorder), true = protected folders only.</summary>
+    public bool TimelineProtectedOnly
+    {
+        get => _timelineProtectedOnly;
+        set
+        {
+            if (_timelineProtectedOnly == value)
+            {
+                return;
+            }
+
+            _timelineProtectedOnly = value;
+            OnChanged();
+            TimelineView.Refresh();
+            if (!_loadingSettings)
+            {
+                _ = PushPatchAsync(new { TimelineProtectedOnly = value });
+            }
+        }
+    }
+
+    private bool RowIsInProtectedFolder(TimelineRow row)
+    {
+        foreach (string root in WatchedFolders)
+        {
+            string prefix = root.TrimEnd('\\') + "\\";
+            if (row.OldPath?.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) == true
+                || row.NewPath?.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) == true)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public string RecentSearch
@@ -254,9 +308,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
         ServiceUp = true;
         int roots = ParseStatus(status.Json!);
 
+        await LoadSettingsAsync();
+
         // First-run seeding: the SYSTEM service can't see the user's real folders, so the GUI
-        // (running as the user) supplies sensible defaults the first time it finds none.
-        if (roots == 0 && !_seededDefaults)
+        // (running as the user) supplies sensible defaults — but ONLY on a genuine first run.
+        // FirstRunCompleted flips permanently once any human folder decision is made, so a
+        // user who removes folders (even all of them) never gets them silently re-added.
+        if (roots == 0 && !_firstRunCompleted && !_seededDefaults)
         {
             _seededDefaults = true;
             List<string> defaults = StepWindSettings.DefaultUserFolders();
@@ -265,8 +323,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 await SetWatchedFoldersAsync(defaults);
             }
         }
-
-        await LoadSettingsAsync();
         await LoadTimelineAsync();
         await LoadRecentFilesAsync();
         if (!string.IsNullOrWhiteSpace(_historyPath))
@@ -363,6 +419,41 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 EncryptionOn = enc.GetBoolean();
             }
+
+            if (root.TryGetProperty("FirstRunCompleted", out JsonElement frc))
+            {
+                _firstRunCompleted = frc.GetBoolean();
+            }
+
+            if (root.TryGetProperty("TimelineProtectedOnly", out JsonElement tpo))
+            {
+                TimelineProtectedOnly = tpo.GetBoolean();
+            }
+
+            if (root.TryGetProperty("RetentionKeepAllHours", out JsonElement kah))
+            {
+                RetentionKeepAllHours = kah.GetInt32();
+            }
+
+            if (root.TryGetProperty("RetentionHourlyDays", out JsonElement hd))
+            {
+                RetentionHourlyDays = hd.GetInt32();
+            }
+
+            if (root.TryGetProperty("RetentionDailyDays", out JsonElement dd))
+            {
+                RetentionDailyDays = dd.GetInt32();
+            }
+
+            if (root.TryGetProperty("RetentionMaxAgeDays", out JsonElement mad))
+            {
+                RetentionMaxAgeDays = mad.GetInt32();
+            }
+
+            if (root.TryGetProperty("RetentionMaxVersionsPerFile", out JsonElement mv))
+            {
+                RetentionMaxVersionsPerFile = mv.GetInt32();
+            }
         }
         finally
         {
@@ -410,6 +501,73 @@ public sealed class MainViewModel : INotifyPropertyChanged
         await RefreshStatusOnlyAsync();
     }
 
+    private async Task PushPatchAsync(object patch)
+        => await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.SetSettings, Arg1 = JsonSerializer.Serialize(patch) });
+
+    // ── Retention (user-configurable) ──────────────────────────────────────────────
+    private bool _firstRunCompleted;
+    private int _retKeepAllHours = 24, _retHourlyDays = 7, _retDailyDays = 90, _retMaxAgeDays = 365, _retMaxVersions = 200;
+
+    public int RetentionKeepAllHours { get => _retKeepAllHours; set { _retKeepAllHours = value; OnChanged(); } }
+    public int RetentionHourlyDays { get => _retHourlyDays; set { _retHourlyDays = value; OnChanged(); } }
+    public int RetentionDailyDays { get => _retDailyDays; set { _retDailyDays = value; OnChanged(); } }
+    public int RetentionMaxAgeDays { get => _retMaxAgeDays; set { _retMaxAgeDays = value; OnChanged(); } }
+    public int RetentionMaxVersionsPerFile { get => _retMaxVersions; set { _retMaxVersions = value; OnChanged(); } }
+
+    /// <summary>Pushes the retention numbers to the service (values clamped service-side).</summary>
+    public async Task ApplyRetentionAsync()
+    {
+        await PushPatchAsync(new
+        {
+            RetentionKeepAllHours = _retKeepAllHours,
+            RetentionHourlyDays = _retHourlyDays,
+            RetentionDailyDays = _retDailyDays,
+            RetentionMaxAgeDays = _retMaxAgeDays,
+            RetentionMaxVersionsPerFile = _retMaxVersions,
+        });
+        await LoadSettingsAsync(); // reflect service-side clamping immediately
+    }
+
+    // ── Data management ────────────────────────────────────────────────────────────
+
+    /// <summary>Deletes stored history now. Selector: "*", "unprotected", or a store path.</summary>
+    public async Task<string> PurgeHistoryAsync(string selector)
+    {
+        IpcResponse resp = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.PurgeHistory, Arg1 = selector });
+        if (!resp.Ok || resp.Json is null)
+        {
+            return resp.Error ?? "Could not delete history.";
+        }
+
+        using JsonDocument doc = JsonDocument.Parse(resp.Json);
+        int versions = doc.RootElement.GetProperty("RemovedVersions").GetInt32();
+        int blobs = doc.RootElement.GetProperty("SweptBlobs").GetInt32();
+        _recentFingerprint = ""; // force the recent list to rebuild
+        await RefreshAsync();
+        return $"Deleted {versions:N0} version{(versions == 1 ? "" : "s")} and freed {blobs:N0} stored chunk{(blobs == 1 ? "" : "s")}.";
+    }
+
+    /// <summary>Runs the retention + GC pass right now instead of waiting for the daily timer.</summary>
+    public async Task<string> RunRetentionNowAsync()
+    {
+        IpcResponse resp = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.RunRetention });
+        if (!resp.Ok || resp.Json is null)
+        {
+            return resp.Error ?? "Could not run cleanup.";
+        }
+
+        using JsonDocument doc = JsonDocument.Parse(resp.Json);
+        int before = doc.RootElement.GetProperty("VersionsBefore").GetInt32();
+        int kept = doc.RootElement.GetProperty("VersionsKept").GetInt32();
+        int swept = doc.RootElement.GetProperty("BlobsSwept").GetInt32();
+        await RefreshAsync();
+        return $"Cleanup done — kept {kept:N0} of {before:N0} versions, freed {swept:N0} chunk{(swept == 1 ? "" : "s")}.";
+    }
+
+    /// <summary>The store-relative name of a folder ("Desk" for …\Desk), for folder purges.</summary>
+    public static string FolderSelector(string folderPath)
+        => System.IO.Path.GetFileName(folderPath.TrimEnd('\\', '/'));
+
     private async Task RefreshStatusOnlyAsync()
     {
         IpcResponse status = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetStatus });
@@ -455,6 +613,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 ByProcess = e.ByProcess,
                 Reversible = e.Reversible,
                 OperationId = e.OperationId,
+                OldPath = e.OldPath,
+                NewPath = e.NewPath,
             });
         }
     }

@@ -107,6 +107,7 @@ public sealed class StepWindHost : IDisposable
                 IpcCommand.RunRetention => RunRetentionCommand(),
                 IpcCommand.GetSettings => Ok(BuildSettings()),
                 IpcCommand.SetSettings => ApplySettings(request.Arg1 ?? ""),
+                IpcCommand.PurgeHistory => PurgeHistory(request.Arg1 ?? ""),
                 _ => IpcResponse.Fail("unsupported command"),
             };
         }
@@ -171,6 +172,13 @@ public sealed class StepWindHost : IDisposable
         _settings.FlightRecorderEnabled,
         _settings.AutoUpdateEnabled,
         _settings.EncryptionEnabled,
+        _settings.FirstRunCompleted,
+        _settings.TimelineProtectedOnly,
+        RetentionKeepAllHours = _settings.Retention.KeepAllHours,
+        RetentionHourlyDays = _settings.Retention.HourlyDays,
+        RetentionDailyDays = _settings.Retention.DailyDays,
+        RetentionMaxAgeDays = _settings.Retention.MaxAgeDays,
+        RetentionMaxVersionsPerFile = _settings.Retention.MaxVersionsPerFile,
     };
 
     /// <summary>Editable slice of settings the GUI can push (WatchedFolders is the main one).</summary>
@@ -180,6 +188,12 @@ public sealed class StepWindHost : IDisposable
         public List<string>? ExcludedPrefixes { get; set; }
         public bool? AutoUpdateEnabled { get; set; }
         public bool? EncryptionEnabled { get; set; }
+        public bool? TimelineProtectedOnly { get; set; }
+        public int? RetentionKeepAllHours { get; set; }
+        public int? RetentionHourlyDays { get; set; }
+        public int? RetentionDailyDays { get; set; }
+        public int? RetentionMaxAgeDays { get; set; }
+        public int? RetentionMaxVersionsPerFile { get; set; }
     }
 
     private IpcResponse ApplySettings(string json)
@@ -222,6 +236,10 @@ public sealed class StepWindHost : IDisposable
                 .ToList();
             foldersChanged = !cleaned.SequenceEqual(_settings.WatchedFolders, StringComparer.OrdinalIgnoreCase);
             _settings.WatchedFolders = cleaned;
+
+            // A human decided the folder set (add, remove, or remove-all). From here on the
+            // GUI must respect it and never auto-seed defaults back in.
+            _settings.FirstRunCompleted = true;
         }
 
         if (patch.ExcludedPrefixes is not null)
@@ -233,6 +251,38 @@ public sealed class StepWindHost : IDisposable
         if (patch.AutoUpdateEnabled is bool au)
         {
             _settings.AutoUpdateEnabled = au;
+        }
+
+        if (patch.TimelineProtectedOnly is bool tpo)
+        {
+            _settings.TimelineProtectedOnly = tpo;
+        }
+
+        // Retention is user-configurable; clamp to sane floors so a typo can't nuke history
+        // (0 everywhere would garbage-collect everything on the next pass).
+        if (patch.RetentionKeepAllHours is int kah)
+        {
+            _settings.Retention.KeepAllHours = Math.Clamp(kah, 1, 24 * 365);
+        }
+
+        if (patch.RetentionHourlyDays is int hd)
+        {
+            _settings.Retention.HourlyDays = Math.Clamp(hd, 0, 365);
+        }
+
+        if (patch.RetentionDailyDays is int dd)
+        {
+            _settings.Retention.DailyDays = Math.Clamp(dd, 0, 3650);
+        }
+
+        if (patch.RetentionMaxAgeDays is int mad)
+        {
+            _settings.Retention.MaxAgeDays = Math.Clamp(mad, 1, 36500);
+        }
+
+        if (patch.RetentionMaxVersionsPerFile is int mv)
+        {
+            _settings.Retention.MaxVersionsPerFile = Math.Clamp(mv, 1, 100_000);
         }
 
         _settings.Save();
@@ -370,6 +420,66 @@ public sealed class StepWindHost : IDisposable
     {
         RetentionResult r = RunRetention();
         return IpcResponse.Success(JsonSerializer.Serialize(r));
+    }
+
+    /// <summary>
+    /// Deletes stored versions NOW — the user's data, the user's call. Selector:
+    ///   "*"            everything (the whole history store);
+    ///   "unprotected"  every version whose folder is no longer in the protected list;
+    ///   anything else  a store path prefix — "Desk" purges that whole folder's history,
+    ///                  "Desk/note.txt" purges one file's history.
+    /// Runs exclusively with captures/GC, then sweeps unreferenced blobs so the disk space
+    /// actually comes back. Purged versions are unrecoverable — the GUI confirms first.
+    /// </summary>
+    private IpcResponse PurgeHistory(string selector)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            return IpcResponse.Fail("nothing to purge — empty selector");
+        }
+
+        (int removedVersions, int sweptBlobs) = _store.RunExclusive(() =>
+        {
+            IReadOnlyList<FileVersion> all = _store.Log.All;
+            List<FileVersion> keep;
+
+            if (selector == "*")
+            {
+                keep = [];
+            }
+            else if (selector.Equals("unprotected", StringComparison.OrdinalIgnoreCase))
+            {
+                var protectedNames = new HashSet<string>(
+                    _settings.WatchedFolders.Select(System.IO.Path.GetFileName).OfType<string>(),
+                    StringComparer.OrdinalIgnoreCase);
+                keep = [.. all.Where(v => protectedNames.Contains(FirstSegment(v.RelativePath)))];
+            }
+            else
+            {
+                string prefix = selector.Replace('\\', '/').TrimStart('/').TrimEnd('/');
+                keep = [.. all.Where(v =>
+                    !v.RelativePath.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+                    && !v.RelativePath.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))];
+            }
+
+            int removed = all.Count - keep.Count;
+            if (removed > 0)
+            {
+                _store.Log.Rewrite(keep);
+            }
+
+            int swept = Retention.Sweep(_store.Log, _store.Blobs);
+            return (removed, swept);
+        });
+
+        _log?.Invoke($"purge '{selector}': removed {removedVersions} version(s), swept {sweptBlobs} blob(s)");
+        return IpcResponse.Success(JsonSerializer.Serialize(new { RemovedVersions = removedVersions, SweptBlobs = sweptBlobs }));
+    }
+
+    private static string FirstSegment(string relativePath)
+    {
+        int slash = relativePath.IndexOf('/');
+        return slash < 0 ? relativePath : relativePath[..slash];
     }
 
     // ── Store re-encode (encryption toggle) ────────────────────────────────────────────
