@@ -183,6 +183,44 @@ public class FolderRemovalTests : IDisposable
     }
 
     [Fact]
+    public async Task Disposing_the_engine_aborts_an_inflight_baseline_scan()
+    {
+        // The real incident: a folder with THOUSANDS of files is added (baseline scan starts
+        // in the background), then the user removes it — the scan must stop, not keep
+        // capturing the whole tree to completion.
+        string big = Path.Combine(_root, "BigFolder");
+        Directory.CreateDirectory(big);
+        for (int i = 0; i < 400; i++)
+        {
+            File.WriteAllText(Path.Combine(big, $"file{i:D4}.txt"), $"content of file {i} " + new string('x', 600));
+        }
+
+        var store = new VersionStore(
+            new BlobStore(Path.Combine(_root, "store2"), new GzipBlobCodec()),
+            new VersionLog(Path.Combine(_root, "store2", "versions.jsonl")));
+        var engine = new WatchEngine(store, new PathExclusions(), [big]);
+
+        Task<int> scan = Task.Run(() => engine.Reconcile());
+
+        // Wait until the baseline is visibly under way, then "remove the folder".
+        for (int i = 0; i < 200 && store.Log.All.Count < 20; i++)
+        {
+            await Task.Delay(25);
+        }
+
+        Assert.True(store.Log.All.Count >= 20, "baseline never started");
+        engine.Dispose();
+        int captured = await scan;
+
+        Assert.True(captured < 400, $"scan ran to completion ({captured}) despite dispose");
+
+        // And nothing keeps trickling in afterwards.
+        int afterDispose = store.Log.All.Count;
+        await Task.Delay(1500);
+        Assert.Equal(afterDispose, store.Log.All.Count);
+    }
+
+    [Fact]
     public void Retention_settings_are_configurable_and_clamped()
     {
         IpcResponse resp = _host.Handle(new IpcRequest

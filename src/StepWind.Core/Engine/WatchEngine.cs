@@ -130,6 +130,11 @@ public sealed class WatchEngine : IDisposable
 
     private void Drain()
     {
+        if (_disposed)
+        {
+            return; // a timer tick already in flight when Dispose ran must not capture
+        }
+
         foreach (string path in _debouncer.TakeReady(DateTime.UtcNow))
         {
             TryCapture(path);
@@ -141,9 +146,9 @@ public sealed class WatchEngine : IDisposable
     {
         try
         {
-            if (!File.Exists(fullPath))
+            if (_disposed || !File.Exists(fullPath))
             {
-                return false; // deleted before it settled — the flight recorder covers deletes
+                return false; // engine torn down, or deleted before it settled
             }
 
             var info = new FileInfo(fullPath);
@@ -188,12 +193,22 @@ public sealed class WatchEngine : IDisposable
     /// rather than a claim: without it, anything edited while the service was down would have no
     /// version. Runs on a background thread; content-level dedup in the store means unchanged
     /// files (same bytes, touched mtime) never create a redundant version. Best-effort per file.
+    ///
+    /// ABORTS THE MOMENT THE ENGINE IS DISPOSED. This pass can grind through a huge folder for
+    /// minutes in the background; when the user removes folders, the host disposes this engine
+    /// and builds a new one — without the abort, an in-flight baseline kept capturing files of
+    /// folders the user had just un-protected ("I removed Desktop but versions keep appearing").
     /// </summary>
     public int Reconcile(CancellationToken ct = default)
     {
         int captured = 0;
         foreach (string root in _roots)
         {
+            if (_disposed)
+            {
+                return captured;
+            }
+
             IEnumerable<string> files;
             try
             {
@@ -211,8 +226,9 @@ public sealed class WatchEngine : IDisposable
 
             foreach (string path in files)
             {
-                if (ct.IsCancellationRequested)
+                if (_disposed || ct.IsCancellationRequested)
                 {
+                    _log?.Invoke($"catch-up aborted (folders changed) after {captured} file(s)");
                     return captured;
                 }
 

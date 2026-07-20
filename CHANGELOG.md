@@ -30,10 +30,14 @@ Initial release — an undo button for your whole PC.
 - **Removing a protected folder is a real decision, honored forever:** removal stops new
   captures instantly (verified live on the running service), and the app asks what to do
   with the already-saved versions — **Keep history** (restorable until retention ages it
-  out) or **Delete history** (gone now, disk space freed). Fixed the bug that made removal
-  look broken: when the folder list became empty the GUI silently re-seeded the default
-  folders (Documents/Desktop/Pictures) on the next launch — a "first run completed" flag
-  now records that a human made a choice, so removed folders never come back on their own.
+  out) or **Delete history** (gone now, disk space freed). Two bugs that made removal look
+  broken are fixed: (1) when the folder list became empty the GUI silently re-seeded the
+  default folders on the next launch — a "first run completed" flag now records that a
+  human made a choice, so removed folders never come back on their own; (2) the background
+  baseline scan that captures a newly added folder's existing files **kept running after
+  the folder was removed** — on a large folder it ground on for minutes, so versions kept
+  appearing with zero folders protected. The scan now aborts the instant the folder set
+  changes (regression test pins it).
   Restores of files whose folder is no longer protected land in
   `Public Documents\StepWind Restored` — an earlier build dropped them inside the
   ACL-locked store where a standard user couldn't open their own recovered file.
