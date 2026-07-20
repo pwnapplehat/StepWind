@@ -3,24 +3,22 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  xmlns:tb="http://www.hardcodet.net/taskbar"
-                 Title="StepWind" Width="900" Height="640"
-                 MinWidth="720" MinHeight="480"
+                 xmlns:views="clr-namespace:StepWind.App.Views"
+                 Title="StepWind" Width="1120" Height="720"
+                 MinWidth="880" MinHeight="560"
                  WindowStartupLocation="CenterScreen"
                  WindowCornerPreference="Round"
                  ExtendsContentIntoTitleBar="True" WindowBackdropType="None"
+                 Background="{StaticResource SW.Bg}"
+                 FontFamily="{StaticResource SW.Font.Text}"
+                 Foreground="{StaticResource SW.Text}"
                  Closing="OnClosing">
-  <Grid>
-    <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="Auto"/>
-      <RowDefinition Height="*"/>
-    </Grid.RowDefinitions>
 
-    <!-- Taskbar-style smoke tint over the acrylic (65%): the wallpaper blur stays visible,
-         but text and cards keep contrast on any wallpaper. Shown only when the acrylic
-         backdrop actually applied (see OnSourceInitialized) — matches BitBroom / Rescue. -->
-    <Border x:Name="SmokeTint" Grid.RowSpan="4" Background="#A60E1014" Visibility="Collapsed"/>
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="212"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
 
     <tb:TaskbarIcon x:Name="Tray" ToolTipText="StepWind — an undo button for your PC"
                     TrayMouseDoubleClick="OnTrayOpen">
@@ -34,188 +32,122 @@
       </tb:TaskbarIcon.ContextMenu>
     </tb:TaskbarIcon>
 
-    <ui:TitleBar Grid.Row="0">
-      <ui:TitleBar.Header>
-        <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
-          <Image Source="pack://application:,,,/Assets/icon.png" Width="22" Height="22"
-                 RenderOptions.BitmapScalingMode="HighQuality"/>
-          <TextBlock Text="StepWind" FontSize="12" VerticalAlignment="Center" Margin="9,0,0,0"
-                     Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
+    <!-- ═══════════ Left rail: brand, navigation, live status ═══════════ -->
+    <Border Grid.Column="0" Background="{StaticResource SW.Rail}"
+            BorderBrush="{StaticResource SW.StrokeSoft}" BorderThickness="0,0,1,0">
+      <DockPanel>
+
+        <!-- Brand block (also a drag region — it sits under the title bar's left edge). -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="20,18,0,22">
+          <Border Width="34" Height="34" CornerRadius="9">
+            <Image Source="pack://application:,,,/Assets/icon.png" Width="34" Height="34"
+                   RenderOptions.BitmapScalingMode="HighQuality"/>
+          </Border>
+          <StackPanel VerticalAlignment="Center" Margin="11,0,0,0">
+            <TextBlock Text="StepWind" FontFamily="{StaticResource SW.Font}" FontSize="16"
+                       FontWeight="SemiBold" Foreground="{StaticResource SW.Text}"/>
+            <TextBlock Text="undo for your PC" FontSize="10.5"
+                       Foreground="{StaticResource SW.Text3}" Margin="0,1,0,0"/>
+          </StackPanel>
         </StackPanel>
-      </ui:TitleBar.Header>
-    </ui:TitleBar>
 
-    <Border Grid.Row="1" Margin="16,6,16,0" CornerRadius="10" Padding="16,12"
-            Background="{DynamicResource ControlFillColorDefaultBrush}"
-            BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
-      <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="Auto"/>
-          <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/>
-        </Grid.ColumnDefinitions>
-        <Ellipse Width="10" Height="10" VerticalAlignment="Center" Margin="0,0,10,0">
-          <Ellipse.Style>
-            <Style TargetType="Ellipse">
-              <Setter Property="Fill" Value="{StaticResource Brush.Danger}"/>
-              <Style.Triggers>
-                <DataTrigger Binding="{Binding ServiceUp}" Value="True">
-                  <Setter Property="Fill" Value="{StaticResource Brush.Accent2}"/>
-                </DataTrigger>
-              </Style.Triggers>
-            </Style>
-          </Ellipse.Style>
-        </Ellipse>
-        <TextBlock Grid.Column="1" Text="{Binding Status}" VerticalAlignment="Center"
-                   Foreground="{DynamicResource TextFillColorPrimaryBrush}"/>
-        <ui:Button Grid.Column="2" Content="Refresh" Appearance="Secondary" Click="OnRefresh"/>
-      </Grid>
+        <!-- Live status footer -->
+        <Border DockPanel.Dock="Bottom" Margin="14,0,14,16" CornerRadius="10" Padding="12,10"
+                Background="{StaticResource SW.Inset}"
+                BorderBrush="{StaticResource SW.StrokeSoft}" BorderThickness="1">
+          <StackPanel>
+            <StackPanel Orientation="Horizontal">
+              <Ellipse Width="8" Height="8" VerticalAlignment="Center">
+                <Ellipse.Style>
+                  <Style TargetType="Ellipse">
+                    <Setter Property="Fill" Value="{StaticResource SW.Danger}"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding ServiceUp}" Value="True">
+                        <Setter Property="Fill" Value="{StaticResource SW.Ok}"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Ellipse.Style>
+              </Ellipse>
+              <TextBlock FontSize="11.5" FontWeight="SemiBold" Margin="7,0,0,0"
+                         Foreground="{StaticResource SW.Text}">
+                <TextBlock.Style>
+                  <Style TargetType="TextBlock">
+                    <Setter Property="Text" Value="Not protecting"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding ServiceUp}" Value="True">
+                        <Setter Property="Text" Value="Protection active"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </TextBlock.Style>
+              </TextBlock>
+            </StackPanel>
+            <TextBlock Text="{Binding Status}" FontSize="10.5" Margin="0,4,0,0"
+                       Foreground="{StaticResource SW.Text3}" TextWrapping="Wrap"/>
+          </StackPanel>
+        </Border>
+
+        <!-- Navigation -->
+        <StackPanel>
+          <TextBlock Text="Protection" Style="{StaticResource SW.SectionLabel}" Margin="24,2,0,6"/>
+          <!-- Checked (not Click) so programmatic selection — UI automation, screen readers,
+               the tray's "Oh no" — navigates exactly like a mouse click. AutomationProperties
+               names are required: the content is a panel, so UIA sees no name otherwise. -->
+          <RadioButton x:Name="NavTimeline" Style="{StaticResource SW.NavItem}" IsChecked="True"
+                       Checked="OnNav" Tag="timeline" GroupName="Nav"
+                       AutomationProperties.Name="Timeline">
+            <StackPanel Orientation="Horizontal">
+              <ui:SymbolIcon Symbol="History24" FontSize="17"/>
+              <TextBlock Text="Timeline" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+          </RadioButton>
+          <RadioButton x:Name="NavFiles" Style="{StaticResource SW.NavItem}"
+                       Checked="OnNav" Tag="files" GroupName="Nav"
+                       AutomationProperties.Name="File versions">
+            <StackPanel Orientation="Horizontal">
+              <ui:SymbolIcon Symbol="DocumentCopy24" FontSize="17"/>
+              <TextBlock Text="File versions" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+          </RadioButton>
+          <RadioButton x:Name="NavFolders" Style="{StaticResource SW.NavItem}"
+                       Checked="OnNav" Tag="folders" GroupName="Nav"
+                       AutomationProperties.Name="Protected folders">
+            <StackPanel Orientation="Horizontal">
+              <ui:SymbolIcon Symbol="ShieldCheckmark24" FontSize="17"/>
+              <TextBlock Text="Protected folders" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+          </RadioButton>
+
+          <TextBlock Text="App" Style="{StaticResource SW.SectionLabel}" Margin="24,18,0,6"/>
+          <RadioButton x:Name="NavSettings" Style="{StaticResource SW.NavItem}"
+                       Checked="OnNav" Tag="settings" GroupName="Nav"
+                       AutomationProperties.Name="Settings">
+            <StackPanel Orientation="Horizontal">
+              <ui:SymbolIcon Symbol="Settings24" FontSize="17"/>
+              <TextBlock Text="Settings" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+          </RadioButton>
+        </StackPanel>
+      </DockPanel>
     </Border>
 
-    <!-- Protected-folders manager -->
-    <Border Grid.Row="2" Margin="16,10,16,0" CornerRadius="10" Padding="14,10"
-            Background="{DynamicResource ControlFillColorDefaultBrush}"
-            BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
-      <Grid>
-        <Grid.ColumnDefinitions>
-          <ColumnDefinition Width="Auto"/>
-          <ColumnDefinition Width="*"/>
-          <ColumnDefinition Width="Auto"/>
-        </Grid.ColumnDefinitions>
-        <TextBlock Text="Protected folders" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0"/>
-        <ItemsControl Grid.Column="1" ItemsSource="{Binding WatchedFolders}" VerticalAlignment="Center">
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-          <ItemsControl.ItemTemplate>
-            <DataTemplate>
-              <Border CornerRadius="6" Margin="0,2,6,2" Padding="8,3"
-                      Background="{DynamicResource ControlStrokeColorDefaultBrush}">
-                <StackPanel Orientation="Horizontal">
-                  <TextBlock Text="{Binding}" VerticalAlignment="Center" FontSize="12"
-                             TextTrimming="CharacterEllipsis" MaxWidth="320"/>
-                  <ui:Button Padding="4,0" Margin="6,0,0,0" Appearance="Transparent" FontSize="11"
-                             Content="✕" ToolTip="Stop protecting this folder" Click="OnRemoveFolder"/>
-                </StackPanel>
-              </Border>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-        <ui:Button Grid.Column="2" Content="Add folder…" Appearance="Secondary" Click="OnAddFolder"/>
+    <!-- ═══════════ Content area ═══════════ -->
+    <Grid Grid.Column="1">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="44"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+
+      <!-- Custom chrome strip: drag region + caption buttons (snap layouts keep working). -->
+      <ui:TitleBar Grid.Row="0" Background="Transparent" ShowMaximize="True" ShowMinimize="True"/>
+
+      <Grid Grid.Row="1">
+        <views:TimelineView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=timeline}"/>
+        <views:FilesView x:Name="Files" Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=files}"/>
+        <views:FoldersView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=folders}"/>
+        <views:SettingsView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=settings}"/>
       </Grid>
-    </Border>
-
-    <!-- Two panes: operation timeline (flight recorder) + file version history -->
-    <Grid Grid.Row="3" Margin="16,10,16,16">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="12"/>
-        <ColumnDefinition Width="360"/>
-      </Grid.ColumnDefinitions>
-
-      <!-- Timeline -->
-      <Border CornerRadius="10" Padding="4,8"
-              Background="{DynamicResource ControlFillColorDefaultBrush}"
-              BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
-        <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-          </Grid.RowDefinitions>
-          <TextBlock Margin="14,4,14,8" FontWeight="SemiBold" Text="What just happened (all drives)"/>
-          <ListBox Grid.Row="1" ItemsSource="{Binding Timeline}" BorderThickness="0" Background="Transparent"
-                   HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-            <ListBox.ItemTemplate>
-              <DataTemplate>
-                <Grid Margin="10,6">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="70"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                  </Grid.ColumnDefinitions>
-                  <Border CornerRadius="5" Padding="6,2" VerticalAlignment="Center" HorizontalAlignment="Left"
-                          Background="{DynamicResource ControlStrokeColorDefaultBrush}">
-                    <TextBlock Text="{Binding Kind}" FontSize="11"/>
-                  </Border>
-                  <StackPanel Grid.Column="1" Margin="10,0">
-                    <TextBlock Text="{Binding Description}" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock FontSize="11" Foreground="{StaticResource Brush.Muted}">
-                      <Run Text="{Binding When}"/><Run Text="  ·  "/><Run Text="{Binding ByProcess}"/>
-                    </TextBlock>
-                  </StackPanel>
-                  <ui:Button Grid.Column="2" Content="Undo" Appearance="Primary" FontSize="12" Padding="10,4"
-                             VerticalAlignment="Center" Click="OnReverse"
-                             Visibility="{Binding Reversible, Converter={StaticResource BoolToVis}}"/>
-                </Grid>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-        </Grid>
-      </Border>
-
-      <!-- Version history -->
-      <Border Grid.Column="2" CornerRadius="10" Padding="4,8"
-              Background="{DynamicResource ControlFillColorDefaultBrush}"
-              BorderThickness="1" BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}">
-        <Grid>
-          <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-          </Grid.RowDefinitions>
-          <Grid Margin="14,4,10,6">
-            <Grid.ColumnDefinitions>
-              <ColumnDefinition Width="*"/>
-              <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
-            <TextBlock Text="File version history" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            <ui:Button Grid.Column="1" Content="Browse a file…" Appearance="Primary" FontSize="12"
-                       Padding="10,4" Click="OnBrowseFile"/>
-          </Grid>
-          <TextBlock Grid.Row="1" Margin="14,0,10,6" FontSize="12" Foreground="{StaticResource Brush.Muted}"
-                     TextWrapping="Wrap" x:Name="HistoryHint"
-                     Text="Pick a recently-changed file below, or Browse to any file — then restore any saved version, even if it was overwritten or deleted."/>
-
-          <!-- Recently changed protected files: click one to load its history (no picker needed). -->
-          <ListBox Grid.Row="2" x:Name="RecentList" ItemsSource="{Binding RecentFiles}" BorderThickness="0"
-                   Background="Transparent" MaxHeight="150" HorizontalContentAlignment="Stretch" Margin="0,0,0,4"
-                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                   SelectionChanged="OnRecentFileSelected">
-            <ListBox.ItemTemplate>
-              <DataTemplate>
-                <StackPanel Margin="8,4">
-                  <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
-                  <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource Brush.Muted}"
-                             TextTrimming="CharacterEllipsis"/>
-                </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-
-          <ListBox Grid.Row="3" ItemsSource="{Binding History}" BorderThickness="0" Background="Transparent"
-                   HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-            <ListBox.ItemTemplate>
-              <DataTemplate>
-                <Grid Margin="10,6">
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                  </Grid.ColumnDefinitions>
-                  <StackPanel>
-                    <TextBlock Text="{Binding When}"/>
-                    <TextBlock FontSize="11" Foreground="{StaticResource Brush.Muted}">
-                      <Run Text="{Binding SizeText}"/><Run Text="  ·  "/><Run Text="{Binding Reason}"/>
-                    </TextBlock>
-                  </StackPanel>
-                  <ui:Button Grid.Column="1" Content="Restore" Appearance="Secondary" FontSize="12" Padding="10,4"
-                             VerticalAlignment="Center" Click="OnRestore"/>
-                </Grid>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-        </Grid>
-      </Border>
     </Grid>
   </Grid>
 </ui:FluentWindow>

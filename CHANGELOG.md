@@ -27,9 +27,14 @@ Initial release — an undo button for your whole PC.
   never delete an in-flight chunk; restores land beside current work; reversal refuses to
   clobber an occupied path; smart exclusions (build junk, caches, OneDrive online-only
   placeholders).
-- **Get to your history fast:** the right pane lists your recently-changed protected files —
-  click one to see and restore its versions (Browse is still there for anything else). A
-  global panic hotkey — **Ctrl+Shift+Z** — opens StepWind from anywhere.
+- **A custom-designed app, not a themed dialog:** StepWind has its own visual identity —
+  opaque deep-slate surfaces, a navigation rail (Timeline / File versions / Protected
+  folders / Settings), and a day-grouped **time river** timeline with color-coded operation
+  rails, filter chips, per-row process attribution and Undo. File versions pairs a
+  searchable recently-changed list with full history and one-click restore. The custom
+  visual layer sits on standard accessible control plumbing, so keyboard navigation and
+  screen readers keep working. A global panic hotkey — **Ctrl+Shift+Z** — opens StepWind
+  from anywhere.
 - **Architecture:** an elevated background service (USN + ETW + engine + named-pipe API) with
   an unelevated WPF tray GUI over an ACL'd local pipe; explicit append-only wire-protocol ids
   so mixed-version GUI/service pairs mid-update can never execute the wrong command; a
@@ -43,6 +48,7 @@ Initial release — an undo button for your whole PC.
 Verified: 70 unit tests; real-hardware elevated E2E through the production classes
 (reconstruct + reverse + version round-trip, including the marker-time delete path measured
 against the live NTFS journal); live service demo with encryption on (key sealed, zero
-plaintext leak, restore byte-exact); UI-automation test of the recent-files → version
-history → Restore flow; and an end-to-end install/uninstall test of the real setup (service
-RUNNING + auto-start + startup entry; clean removal with the store preserved).
+plaintext leak, restore byte-exact); UI-automation pass driving every view of the redesigned
+GUI (timeline, recent-files → version history → Restore, folders, settings); and an
+end-to-end install/uninstall test of the real setup (service RUNNING + auto-start + startup
+entry; clean removal with the store preserved).

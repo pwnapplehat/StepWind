@@ -1,0 +1,193 @@
+<UserControl x:Class="StepWind.App.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+  <Grid Margin="28,4,28,20">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <StackPanel>
+      <TextBlock Text="Settings" Style="{StaticResource SW.PageTitle}"/>
+      <TextBlock Style="{StaticResource SW.PageSub}" Margin="0,4,0,0"
+                 Text="StepWind is set-and-forget by design — there isn't much to configure."/>
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="1" Margin="0,16,0,0" VerticalScrollBarVisibility="Auto">
+      <StackPanel MaxWidth="720" HorizontalAlignment="Left">
+
+        <TextBlock Text="Updates" Style="{StaticResource SW.SectionLabel}" Margin="2,0,0,8"/>
+        <Border Style="{StaticResource SW.CardStyle}" Padding="16,13">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="Automatic silent updates" FontSize="13" FontWeight="Medium"
+                         Foreground="{StaticResource SW.Text}"/>
+              <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
+                         TextWrapping="Wrap"
+                         Text="The background service checks GitHub daily, verifies each update's SHA-256, and installs it with zero prompts."/>
+            </StackPanel>
+            <ui:ToggleSwitch Grid.Column="1" VerticalAlignment="Center"
+                             IsChecked="{Binding AutoUpdateEnabled}"/>
+          </Grid>
+        </Border>
+
+        <TextBlock Text="Protection" Style="{StaticResource SW.SectionLabel}" Margin="2,18,0,8"/>
+        <Border Style="{StaticResource SW.CardStyle}" Padding="16,13">
+          <StackPanel>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Flight recorder" FontSize="13" FontWeight="Medium"
+                           Foreground="{StaticResource SW.Text}"/>
+                <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
+                           TextWrapping="Wrap"
+                           Text="Records file operations on all NTFS drives for the timeline and one-click undo."/>
+              </StackPanel>
+              <Border Grid.Column="1" CornerRadius="6" Padding="9,3" VerticalAlignment="Center">
+                <Border.Style>
+                  <Style TargetType="Border">
+                    <Setter Property="Background" Value="#1AFB7185"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding FlightRecorderOn}" Value="True">
+                        <Setter Property="Background" Value="#1A34D399"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Border.Style>
+                <TextBlock FontSize="11" FontWeight="SemiBold">
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                      <Setter Property="Text" Value="Off"/>
+                      <Setter Property="Foreground" Value="{StaticResource SW.Danger}"/>
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding FlightRecorderOn}" Value="True">
+                          <Setter Property="Text" Value="Active"/>
+                          <Setter Property="Foreground" Value="{StaticResource SW.Ok}"/>
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+              </Border>
+            </Grid>
+
+            <Rectangle Height="1" Fill="{StaticResource SW.StrokeSoft}" Margin="0,12"/>
+
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Encryption at rest" FontSize="13" FontWeight="Medium"
+                           Foreground="{StaticResource SW.Text}"/>
+                <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
+                           TextWrapping="Wrap"
+                           Text="AES-256-GCM with a key sealed by Windows (machine scope). Chosen when the store is created — a stolen or offline drive can't read your history."/>
+              </StackPanel>
+              <Border Grid.Column="1" CornerRadius="6" Padding="9,3" VerticalAlignment="Center">
+                <Border.Style>
+                  <Style TargetType="Border">
+                    <Setter Property="Background" Value="#14FFFFFF"/>
+                    <Style.Triggers>
+                      <DataTrigger Binding="{Binding EncryptionOn}" Value="True">
+                        <Setter Property="Background" Value="#1A34D399"/>
+                      </DataTrigger>
+                    </Style.Triggers>
+                  </Style>
+                </Border.Style>
+                <TextBlock FontSize="11" FontWeight="SemiBold">
+                  <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                      <Setter Property="Text" Value="Off"/>
+                      <Setter Property="Foreground" Value="{StaticResource SW.Text2}"/>
+                      <Style.Triggers>
+                        <DataTrigger Binding="{Binding EncryptionOn}" Value="True">
+                          <Setter Property="Text" Value="On"/>
+                          <Setter Property="Foreground" Value="{StaticResource SW.Ok}"/>
+                        </DataTrigger>
+                      </Style.Triggers>
+                    </Style>
+                  </TextBlock.Style>
+                </TextBlock>
+              </Border>
+            </Grid>
+
+            <Rectangle Height="1" Fill="{StaticResource SW.StrokeSoft}" Margin="0,12"/>
+
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Versions kept" FontSize="13" FontWeight="Medium"
+                           Foreground="{StaticResource SW.Text}"/>
+                <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
+                           Text="Everything for 48 hours, hourly for a week, daily for six months."/>
+              </StackPanel>
+              <TextBlock Grid.Column="1" Text="{Binding TotalVersions, StringFormat=N0}"
+                         FontFamily="{StaticResource SW.Font}" FontSize="16" FontWeight="SemiBold"
+                         Foreground="{StaticResource SW.Cyan}" VerticalAlignment="Center"/>
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <TextBlock Text="Shortcuts" Style="{StaticResource SW.SectionLabel}" Margin="2,18,0,8"/>
+        <Border Style="{StaticResource SW.CardStyle}" Padding="16,13">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock Text="Panic hotkey" FontSize="13" FontWeight="Medium"
+                         Foreground="{StaticResource SW.Text}"/>
+              <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
+                         Text="Opens StepWind from anywhere the moment something goes wrong."/>
+            </StackPanel>
+            <Border Grid.Column="1" CornerRadius="6" Padding="10,4" VerticalAlignment="Center"
+                    Background="{StaticResource SW.Inset}" BorderThickness="1"
+                    BorderBrush="{StaticResource SW.Stroke}">
+              <TextBlock Text="Ctrl + Shift + Z" FontFamily="{StaticResource SW.Font.Mono}"
+                         FontSize="11.5" Foreground="{StaticResource SW.Text}"/>
+            </Border>
+          </Grid>
+        </Border>
+
+        <TextBlock Text="About" Style="{StaticResource SW.SectionLabel}" Margin="2,18,0,8"/>
+        <Border Style="{StaticResource SW.CardStyle}" Padding="16,13" Margin="0,0,0,8">
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="StepWind" FontSize="13" FontWeight="Medium"
+                           Foreground="{StaticResource SW.Text}"/>
+                <TextBlock Text="{Binding AppVersion, StringFormat=v{0}}" FontSize="11.5"
+                           Foreground="{StaticResource SW.Text3}" Margin="7,1,0,0"/>
+              </StackPanel>
+              <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
+                         Text="Free · open source · 100% local · no cloud · no account · no telemetry"/>
+            </StackPanel>
+            <Button Grid.Column="1" Style="{StaticResource SW.Button.Ghost}" Content="stepwind.app"
+                    Margin="0,0,6,0" Click="OnOpenSite"/>
+            <Button Grid.Column="2" Style="{StaticResource SW.Button.Ghost}" Content="GitHub"
+                    Click="OnOpenRepo"/>
+          </Grid>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

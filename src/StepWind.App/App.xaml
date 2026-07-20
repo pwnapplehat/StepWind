@@ -2,21 +2,22 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+             xmlns:local="clr-namespace:StepWind.App"
              ShutdownMode="OnExplicitShutdown">
   <Application.Resources>
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries>
+        <!-- WPF-UI supplies accessible control plumbing (ToggleSwitch, SymbolIcon, window
+             caption buttons); StepWind's own design system (Theme.xaml) paints everything. -->
         <ui:ThemesDictionary Theme="Dark"/>
         <ui:ControlsDictionary/>
+        <ResourceDictionary Source="Theme.xaml"/>
       </ResourceDictionary.MergedDictionaries>
 
-      <!-- StepWind identity: indigo → cyan on near-black. -->
-      <SolidColorBrush x:Key="Brush.Accent" Color="#6366F1"/>
-      <SolidColorBrush x:Key="Brush.Accent2" Color="#22D3EE"/>
-      <SolidColorBrush x:Key="Brush.Muted" Color="#8B93A7"/>
-      <SolidColorBrush x:Key="Brush.Warn" Color="#FBBF24"/>
-      <SolidColorBrush x:Key="Brush.Danger" Color="#F87171"/>
       <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+      <local:ViewVisibilityConverter x:Key="ViewVis"/>
+      <local:KindBrushConverter x:Key="KindBrush"/>
+      <local:KindBrushConverter x:Key="KindBrushFaint" Variant="Faint"/>
     </ResourceDictionary>
   </Application.Resources>
 </Application>

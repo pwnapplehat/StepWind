@@ -1,0 +1,107 @@
+<UserControl x:Class="StepWind.App.Views.TimelineView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+  <Grid Margin="28,4,28,20">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+
+    <!-- Header -->
+    <Grid>
+      <StackPanel>
+        <TextBlock Text="Timeline" Style="{StaticResource SW.PageTitle}"/>
+        <TextBlock Style="{StaticResource SW.PageSub}" Margin="0,4,0,0"
+                   Text="Everything that just happened to your files, on every drive — moves and renames undo in one click."/>
+      </StackPanel>
+      <Button Style="{StaticResource SW.Button}" HorizontalAlignment="Right" VerticalAlignment="Top"
+              Click="OnRefresh">
+        <StackPanel Orientation="Horizontal">
+          <ui:SymbolIcon Symbol="ArrowClockwise24" FontSize="14"/>
+          <TextBlock Text="Refresh" Margin="7,0,0,0"/>
+        </StackPanel>
+      </Button>
+    </Grid>
+
+    <!-- Kind filter chips -->
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,16,0,14">
+      <RadioButton Style="{StaticResource SW.Chip}" Content="All" IsChecked="True"
+                   GroupName="TlFilter" Click="OnFilter" Tag="All"/>
+      <RadioButton Style="{StaticResource SW.Chip}" Content="Moves" Margin="8,0,0,0"
+                   GroupName="TlFilter" Click="OnFilter" Tag="Move"/>
+      <RadioButton Style="{StaticResource SW.Chip}" Content="Renames" Margin="8,0,0,0"
+                   GroupName="TlFilter" Click="OnFilter" Tag="Rename"/>
+      <RadioButton Style="{StaticResource SW.Chip}" Content="Deletes" Margin="8,0,0,0"
+                   GroupName="TlFilter" Click="OnFilter" Tag="Delete"/>
+      <RadioButton Style="{StaticResource SW.Chip}" Content="Created" Margin="8,0,0,0"
+                   GroupName="TlFilter" Click="OnFilter" Tag="Create"/>
+      <RadioButton Style="{StaticResource SW.Chip}" Content="Changed" Margin="8,0,0,0"
+                   GroupName="TlFilter" Click="OnFilter" Tag="Modify"/>
+    </StackPanel>
+
+    <!-- The time river -->
+    <Border Grid.Row="2" Style="{StaticResource SW.CardStyle}">
+      <ListBox Style="{StaticResource SW.List}" ItemsSource="{Binding TimelineView}"
+               Padding="6,4">
+        <ListBox.GroupStyle>
+          <GroupStyle>
+            <GroupStyle.HeaderTemplate>
+              <DataTemplate>
+                <Grid Margin="14,14,14,6">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Text="{Binding Name}" FontFamily="{StaticResource SW.Font}"
+                             FontSize="12.5" FontWeight="SemiBold"
+                             Foreground="{StaticResource SW.Cyan}"/>
+                  <Rectangle Grid.Column="1" Height="1" Margin="12,1,0,0" VerticalAlignment="Center"
+                             Fill="{StaticResource SW.StrokeSoft}"/>
+                </Grid>
+              </DataTemplate>
+            </GroupStyle.HeaderTemplate>
+          </GroupStyle>
+        </ListBox.GroupStyle>
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <Grid Margin="10,3">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="74"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+              </Grid.ColumnDefinitions>
+
+              <!-- Kind rail: the colored spine that makes the river read at a glance. -->
+              <Border Width="3" CornerRadius="2" Margin="4,2"
+                      Background="{Binding Kind, Converter={StaticResource KindBrush}}"/>
+
+              <StackPanel Grid.Column="1" Margin="12,4,0,4" VerticalAlignment="Center">
+                <TextBlock Text="{Binding Time}" FontFamily="{StaticResource SW.Font.Mono}"
+                           FontSize="11.5" Foreground="{StaticResource SW.Text2}"/>
+                <Border CornerRadius="4" Padding="5,1" Margin="0,4,10,0" HorizontalAlignment="Left"
+                        Background="{Binding Kind, Converter={StaticResource KindBrushFaint}}">
+                  <TextBlock Text="{Binding Kind}" FontSize="10" FontWeight="SemiBold"
+                             Foreground="{Binding Kind, Converter={StaticResource KindBrush}}"/>
+                </Border>
+              </StackPanel>
+
+              <StackPanel Grid.Column="2" Margin="6,4" VerticalAlignment="Center">
+                <TextBlock Text="{Binding Description}" FontSize="13"
+                           Foreground="{StaticResource SW.Text}" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="{Binding ByProcess}" FontSize="11"
+                           Foreground="{StaticResource SW.Text3}" Margin="0,2,0,0"/>
+              </StackPanel>
+
+              <Button Grid.Column="3" Style="{StaticResource SW.Button.Primary}" Content="Undo"
+                      Padding="16,6" VerticalAlignment="Center" Margin="8,0,6,0" Click="OnReverse"
+                      Visibility="{Binding Reversible, Converter={StaticResource BoolToVis}}"/>
+            </Grid>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Border>
+  </Grid>
+</UserControl>

@@ -14,7 +14,7 @@ everyone, not just people who use git.
 
 Free · open source · 100% local · no cloud · no account · no telemetry
 
-<img src="docs/screenshots/app.png" width="820" alt="StepWind timeline with one-click undo and file version history"/>
+<img src="docs/screenshots/app.png" width="820" alt="StepWind timeline — a live, day-grouped feed of file operations with one-click undo"/>
 
 </div>
 
@@ -69,6 +69,21 @@ a lightly-edited 2 GB file doesn't cost 2 GB per save.
 - **Fully automatic, silent updates** — because the service already runs as SYSTEM, it
   checks GitHub for new releases, verifies the setup's SHA-256, and installs it with **zero
   UAC prompts**. Set-and-forget, like it should be.
+
+## A UI designed for the job
+
+StepWind has its own visual identity — an opaque deep-slate design with a navigation rail,
+built around the product's core idea: a **time river**. Operations flow down the timeline
+grouped by day, each with a color-coded rail (create / change / move / rename / delete),
+monospaced clock time, the app that did it, and an Undo button right on the row. Filter
+chips narrow the river to just deletes or just moves; the File versions page pairs a
+searchable recently-changed list with full version history and one-click restore. Custom
+visual layer, standard accessible control plumbing underneath — keyboard navigation and
+screen readers keep working.
+
+| File versions | Protected folders | Settings |
+|---|---|---|
+| <img src="docs/screenshots/files.png" width="270"/> | <img src="docs/screenshots/folders.png" width="270"/> | <img src="docs/screenshots/settings.png" width="270"/> |
 
 ## Architecture
 

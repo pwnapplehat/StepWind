@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Windows.Data;
 using System.Windows.Threading;
 using StepWind.Core.Engine;
 using StepWind.Core.Ipc;
@@ -12,7 +13,13 @@ namespace StepWind.App.ViewModels;
 public sealed class TimelineRow
 {
     public required string Kind { get; init; }
-    public required string When { get; init; }
+
+    /// <summary>Group header key: "Today", "Yesterday", or "Jul 18".</summary>
+    public required string Day { get; init; }
+
+    /// <summary>Clock time within the day ("14:31:07").</summary>
+    public required string Time { get; init; }
+
     public required string Description { get; init; }
     public string? ByProcess { get; init; }
     public bool Reversible { get; init; }
@@ -38,9 +45,9 @@ public sealed class RecentFileRow
 
 /// <summary>
 /// Talks to the elevated service over the pipe and drives the window: connection status, the
-/// live operation timeline (with one-click reverse), and per-file version history (with
-/// restore). All work is async and failure-tolerant — if the service is down, the UI says so
-/// instead of throwing.
+/// live operation timeline (with one-click reverse), per-file version history (with restore),
+/// protected-folder management, and settings. All work is async and failure-tolerant — if the
+/// service is down, the UI says so instead of throwing.
 /// </summary>
 public sealed class MainViewModel : INotifyPropertyChanged
 {
@@ -49,9 +56,32 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _status = "Connecting to StepWind service…";
     private bool _serviceUp;
     private string _historyPath = "";
+    private string _historyTitle = DefaultHistoryTitle;
+    private string _currentView = "timeline";
+    private string _timelineFilter = "All";
+    private string _recentSearch = "";
+    private bool _autoUpdateEnabled = true;
+    private bool _encryptionOn;
+    private bool _flightRecorderOn;
+    private int _protectingCount;
+    private long _totalVersions;
+    private bool _loadingSettings;
+
+    private const string DefaultHistoryTitle =
+        "Pick a file to see every saved version — restore any of them, even after an overwrite or delete.";
 
     public MainViewModel()
     {
+        TimelineView = CollectionViewSource.GetDefaultView(Timeline);
+        TimelineView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(TimelineRow.Day)));
+        TimelineView.Filter = o =>
+            _timelineFilter == "All" || (o is TimelineRow r && r.Kind == _timelineFilter);
+
+        RecentView = CollectionViewSource.GetDefaultView(RecentFiles);
+        RecentView.Filter = o =>
+            string.IsNullOrWhiteSpace(_recentSearch)
+            || (o is RecentFileRow f && f.RelativePath.Contains(_recentSearch, StringComparison.OrdinalIgnoreCase));
+
         _refreshTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(3) };
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _refreshTimer.Start();
@@ -63,6 +93,43 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<VersionRow> History { get; } = [];
 
     public ObservableCollection<RecentFileRow> RecentFiles { get; } = [];
+
+    public ObservableCollection<string> WatchedFolders { get; } = [];
+
+    /// <summary>Grouped (by day) + filtered view the timeline list binds to.</summary>
+    public ICollectionView TimelineView { get; }
+
+    /// <summary>Search-filtered view of the recent files list.</summary>
+    public ICollectionView RecentView { get; }
+
+    public string CurrentView
+    {
+        get => _currentView;
+        set { _currentView = value; OnChanged(); }
+    }
+
+    /// <summary>"All" or an operation kind name; drives the timeline filter chips.</summary>
+    public string TimelineFilter
+    {
+        get => _timelineFilter;
+        set
+        {
+            _timelineFilter = value;
+            OnChanged();
+            TimelineView.Refresh();
+        }
+    }
+
+    public string RecentSearch
+    {
+        get => _recentSearch;
+        set
+        {
+            _recentSearch = value;
+            OnChanged();
+            RecentView.Refresh();
+        }
+    }
 
     public string Status
     {
@@ -76,15 +143,66 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set { _serviceUp = value; OnChanged(); }
     }
 
+    public int ProtectingCount
+    {
+        get => _protectingCount;
+        private set { _protectingCount = value; OnChanged(); }
+    }
+
+    public long TotalVersions
+    {
+        get => _totalVersions;
+        private set { _totalVersions = value; OnChanged(); }
+    }
+
+    public bool FlightRecorderOn
+    {
+        get => _flightRecorderOn;
+        private set { _flightRecorderOn = value; OnChanged(); }
+    }
+
+    public bool EncryptionOn
+    {
+        get => _encryptionOn;
+        private set { _encryptionOn = value; OnChanged(); }
+    }
+
+    /// <summary>Two-way: flipping the switch pushes the change to the service immediately.</summary>
+    public bool AutoUpdateEnabled
+    {
+        get => _autoUpdateEnabled;
+        set
+        {
+            if (_autoUpdateEnabled == value)
+            {
+                return;
+            }
+
+            _autoUpdateEnabled = value;
+            OnChanged();
+            if (!_loadingSettings)
+            {
+                _ = PushAutoUpdateAsync(value);
+            }
+        }
+    }
+
     public string HistoryPath
     {
         get => _historyPath;
         set { _historyPath = value; OnChanged(); }
     }
 
-    private bool _seededDefaults;
+    public string HistoryTitle
+    {
+        get => _historyTitle;
+        private set { _historyTitle = value; OnChanged(); }
+    }
 
-    public ObservableCollection<string> WatchedFolders { get; } = [];
+    public static string AppVersion =>
+        typeof(MainViewModel).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0.0";
+
+    private bool _seededDefaults;
 
     public async Task RefreshAsync()
     {
@@ -97,17 +215,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
 
         ServiceUp = true;
-        int roots;
-        using (JsonDocument doc = JsonDocument.Parse(status.Json!))
-        {
-            JsonElement r = doc.RootElement;
-            roots = r.GetProperty("WatchedRoots").GetInt32();
-            long versions = r.TryGetProperty("TotalVersions", out JsonElement tv) ? tv.GetInt64() : 0;
-            bool fr = r.TryGetProperty("FlightRecorder", out JsonElement f) && f.GetBoolean();
-            Status = roots == 0
-                ? $"No folders protected yet — add one to keep version history · flight recorder {(fr ? "on" : "off")}"
-                : $"Protecting {roots} folder(s) · {versions:N0} versions kept · flight recorder {(fr ? "on" : "off")}";
-        }
+        int roots = ParseStatus(status.Json!);
 
         // First-run seeding: the SYSTEM service can't see the user's real folders, so the GUI
         // (running as the user) supplies sensible defaults the first time it finds none.
@@ -128,6 +236,24 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             await LoadHistoryAsync(_historyPath);
         }
+    }
+
+    /// <summary>Parses GetStatus json into the status properties; returns the root count.</summary>
+    private int ParseStatus(string json)
+    {
+        using JsonDocument doc = JsonDocument.Parse(json);
+        JsonElement r = doc.RootElement;
+        int roots = r.GetProperty("WatchedRoots").GetInt32();
+        long versions = r.TryGetProperty("TotalVersions", out JsonElement tv) ? tv.GetInt64() : 0;
+        bool fr = r.TryGetProperty("FlightRecorder", out JsonElement f) && f.GetBoolean();
+
+        ProtectingCount = roots;
+        TotalVersions = versions;
+        FlightRecorderOn = fr;
+        Status = roots == 0
+            ? "No folders protected yet"
+            : $"Protecting {roots} folder{(roots == 1 ? "" : "s")} · {versions:N0} versions kept";
+        return roots;
     }
 
     private string _recentFingerprint = "";
@@ -157,7 +283,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 RelativePath = f.RelativePath,
                 DisplayName = name,
-                Detail = $"{f.RelativePath} · {f.VersionCount} version(s) · {f.LastCapturedUtc.ToLocalTime():MMM d, HH:mm}",
+                Detail = $"{f.RelativePath} · {f.VersionCount} version{(f.VersionCount == 1 ? "" : "s")} · {f.LastCapturedUtc.ToLocalTime():MMM d, HH:mm}",
             });
         }
     }
@@ -170,17 +296,37 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
-        WatchedFolders.Clear();
-        using JsonDocument doc = JsonDocument.Parse(resp.Json);
-        if (doc.RootElement.TryGetProperty("WatchedFolders", out JsonElement wf) && wf.ValueKind == JsonValueKind.Array)
+        _loadingSettings = true;
+        try
         {
-            foreach (JsonElement e in wf.EnumerateArray())
+            using JsonDocument doc = JsonDocument.Parse(resp.Json);
+            JsonElement root = doc.RootElement;
+
+            WatchedFolders.Clear();
+            if (root.TryGetProperty("WatchedFolders", out JsonElement wf) && wf.ValueKind == JsonValueKind.Array)
             {
-                if (e.GetString() is { Length: > 0 } path)
+                foreach (JsonElement e in wf.EnumerateArray())
                 {
-                    WatchedFolders.Add(path);
+                    if (e.GetString() is { Length: > 0 } path)
+                    {
+                        WatchedFolders.Add(path);
+                    }
                 }
             }
+
+            if (root.TryGetProperty("AutoUpdateEnabled", out JsonElement au))
+            {
+                AutoUpdateEnabled = au.GetBoolean();
+            }
+
+            if (root.TryGetProperty("EncryptionEnabled", out JsonElement enc))
+            {
+                EncryptionOn = enc.GetBoolean();
+            }
+        }
+        finally
+        {
+            _loadingSettings = false;
         }
     }
 
@@ -208,19 +354,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
         await RefreshStatusOnlyAsync();
     }
 
+    private async Task PushAutoUpdateAsync(bool enabled)
+    {
+        string json = JsonSerializer.Serialize(new { AutoUpdateEnabled = enabled });
+        await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.SetSettings, Arg1 = json });
+    }
+
     private async Task RefreshStatusOnlyAsync()
     {
         IpcResponse status = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetStatus });
         if (status.Ok && status.Json is not null)
         {
-            using JsonDocument doc = JsonDocument.Parse(status.Json);
-            JsonElement r = doc.RootElement;
-            int roots = r.GetProperty("WatchedRoots").GetInt32();
-            long versions = r.TryGetProperty("TotalVersions", out JsonElement tv) ? tv.GetInt64() : 0;
-            bool fr = r.TryGetProperty("FlightRecorder", out JsonElement f) && f.GetBoolean();
-            Status = roots == 0
-                ? $"No folders protected yet — add one to keep version history · flight recorder {(fr ? "on" : "off")}"
-                : $"Protecting {roots} folder(s) · {versions:N0} versions kept · flight recorder {(fr ? "on" : "off")}";
+            ParseStatus(status.Json);
         }
     }
 
@@ -243,13 +388,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         _timelineFingerprint = resp.Json;
         TimelineEntry[] entries = JsonSerializer.Deserialize<TimelineEntry[]>(resp.Json) ?? [];
+
+        // Plain Clear+Add: the collection view tracks ObservableCollection changes
+        // incrementally. (DeferRefresh must NOT wrap source mutations — WPF throws
+        // "cannot change contents while Refresh is being deferred".)
         Timeline.Clear();
         foreach (TimelineEntry e in entries)
         {
+            DateTime local = e.TimestampUtc.ToLocalTime();
             Timeline.Add(new TimelineRow
             {
                 Kind = e.Kind,
-                When = e.TimestampUtc.ToLocalTime().ToString("MMM d, HH:mm:ss"),
+                Day = DayLabel(local),
+                Time = local.ToString("HH:mm:ss"),
                 Description = Describe(e),
                 ByProcess = e.ByProcess,
                 Reversible = e.Reversible,
@@ -258,9 +409,19 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    private static string DayLabel(DateTime local)
+    {
+        DateTime today = DateTime.Now.Date;
+        return local.Date == today ? "Today"
+            : local.Date == today.AddDays(-1) ? "Yesterday"
+            : local.Year == today.Year ? local.ToString("MMMM d")
+            : local.ToString("MMMM d, yyyy");
+    }
+
     public async Task LoadHistoryAsync(string relativePath)
     {
         HistoryPath = relativePath;
+        HistoryTitle = relativePath;
         IpcResponse resp = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = relativePath });
         History.Clear();
         if (!resp.Ok || resp.Json is null)

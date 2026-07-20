@@ -151,6 +151,7 @@ public sealed class StepWindHost : IDisposable
         _settings.ExcludedPrefixes,
         _settings.FlightRecorderEnabled,
         _settings.AutoUpdateEnabled,
+        _settings.EncryptionEnabled,
     };
 
     /// <summary>Editable slice of settings the GUI can push (WatchedFolders is the main one).</summary>
