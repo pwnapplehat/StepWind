@@ -335,10 +335,35 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set { _totalVersions = value; OnChanged(); }
     }
 
+    /// <summary>
+    /// Two-way: flipping the switch starts/stops the whole-machine flight recorder live.
+    /// If the service can't start it (e.g. unprivileged dev run), the push fails and the
+    /// next settings load snaps the switch back to the truth.
+    /// </summary>
     public bool FlightRecorderOn
     {
         get => _flightRecorderOn;
-        private set { _flightRecorderOn = value; OnChanged(); }
+        set
+        {
+            if (_flightRecorderOn == value)
+            {
+                return;
+            }
+
+            _flightRecorderOn = value;
+            OnChanged();
+            if (!_loadingSettings)
+            {
+                _ = PushFlightRecorderAsync(value);
+            }
+        }
+    }
+
+    private async Task PushFlightRecorderAsync(bool enabled)
+    {
+        await PushPatchAsync(new { FlightRecorderEnabled = enabled });
+        await LoadSettingsAsync();
+        await RefreshStatusOnlyAsync();
     }
 
     /// <summary>
@@ -468,7 +493,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         ProtectingCount = roots;
         TotalVersions = versions;
-        FlightRecorderOn = fr;
+        if (_flightRecorderOn != fr)
+        {
+            // Reflect the ACTUAL running state without going through the pushing setter —
+            // status updates must never themselves send a settings patch.
+            _flightRecorderOn = fr;
+            OnChanged(nameof(FlightRecorderOn));
+        }
+
         _storeBytes = r.TryGetProperty("StoreBytes", out JsonElement sb) ? sb.GetInt64() : 0;
         OnChanged(nameof(StorageText));
         ReEncoding = r.TryGetProperty("ReEncoding", out JsonElement re) && re.GetBoolean();

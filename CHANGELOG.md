@@ -66,6 +66,17 @@ Initial release — an undo button for your whole PC.
   visual layer sits on standard accessible control plumbing, so keyboard navigation and
   screen readers keep working. A global panic hotkey — **Ctrl+Shift+Z** — opens StepWind
   from anywhere.
+- **The flight recorder is a real toggle now** (it was a read-only badge). Flip it in
+  Settings to start/stop whole-machine operation recording live, no restart. If ETW/USN
+  can't start (e.g. an unprivileged run) the switch fails honestly and stays off rather than
+  lying.
+- **Fixed a serious installer/auto-update bug:** the setup declared `AppMutex`, so with
+  `/SUPPRESSMSGBOXES` the "app is running" prompt auto-cancelled and the whole silent update
+  **aborted before copying a single file** — upgrades (and every silent auto-update) kept the
+  OLD service binary while reporting success. Setup now closes the tray app via Restart
+  Manager and cleanly stops the service before copying, so binaries actually get replaced.
+  (Also: the E2E harnesses now back up and restore your real settings.json, so testing can
+  never again leave the flight recorder or auto-update switched off on a real machine.)
 - **File versions is a folder browser now, not one long list:** open a protected folder,
   drill into any subfolder via breadcrumbs, and see version history scoped to what you picked
   — built for deep dev trees (`Reports/Q1/…`, `Code/src/…`), not just a flat feed. Each

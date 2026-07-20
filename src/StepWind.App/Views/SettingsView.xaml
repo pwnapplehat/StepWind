@@ -50,34 +50,10 @@
                            Foreground="{StaticResource SW.Text}"/>
                 <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
                            TextWrapping="Wrap"
-                           Text="Records file operations on all NTFS drives for the timeline and one-click undo."/>
+                           Text="Records file operations on all NTFS drives for the timeline and one-click undo. Takes effect immediately — no restart."/>
               </StackPanel>
-              <Border Grid.Column="1" CornerRadius="6" Padding="9,3" VerticalAlignment="Center">
-                <Border.Style>
-                  <Style TargetType="Border">
-                    <Setter Property="Background" Value="#1AFB7185"/>
-                    <Style.Triggers>
-                      <DataTrigger Binding="{Binding FlightRecorderOn}" Value="True">
-                        <Setter Property="Background" Value="#1A34D399"/>
-                      </DataTrigger>
-                    </Style.Triggers>
-                  </Style>
-                </Border.Style>
-                <TextBlock FontSize="11" FontWeight="SemiBold">
-                  <TextBlock.Style>
-                    <Style TargetType="TextBlock">
-                      <Setter Property="Text" Value="Off"/>
-                      <Setter Property="Foreground" Value="{StaticResource SW.Danger}"/>
-                      <Style.Triggers>
-                        <DataTrigger Binding="{Binding FlightRecorderOn}" Value="True">
-                          <Setter Property="Text" Value="Active"/>
-                          <Setter Property="Foreground" Value="{StaticResource SW.Ok}"/>
-                        </DataTrigger>
-                      </Style.Triggers>
-                    </Style>
-                  </TextBlock.Style>
-                </TextBlock>
-              </Border>
+              <ui:ToggleSwitch Grid.Column="1" VerticalAlignment="Center"
+                               IsChecked="{Binding FlightRecorderOn}"/>
             </Grid>
 
             <Rectangle Height="1" Fill="{StaticResource SW.StrokeSoft}" Margin="0,12"/>

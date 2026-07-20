@@ -303,6 +303,49 @@ public class FolderRemovalTests : IDisposable
         Assert.Equal("Docs/Work/budget.xlsx", scoped[0].RelativePath);
     }
 
+    [Fact]
+    public void Flight_recorder_toggles_live_or_fails_honestly()
+    {
+        static bool StatusSaysRecorder(StepWindHost host)
+        {
+            IpcResponse st = host.Handle(new IpcRequest { Command = IpcCommand.GetStatus });
+            using JsonDocument doc = JsonDocument.Parse(st.Json!);
+            return doc.RootElement.GetProperty("FlightRecorder").GetBoolean();
+        }
+
+        Assert.False(StatusSaysRecorder(_host)); // constructed with it off
+
+        IpcResponse on = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { FlightRecorderEnabled = true }),
+        });
+
+        if (on.Ok)
+        {
+            // Privileged environment: it must actually be running now, and stop cleanly.
+            Assert.True(StatusSaysRecorder(_host));
+            Assert.True(_settings.FlightRecorderEnabled);
+
+            IpcResponse off = _host.Handle(new IpcRequest
+            {
+                Command = IpcCommand.SetSettings,
+                Arg1 = JsonSerializer.Serialize(new { FlightRecorderEnabled = false }),
+            });
+            Assert.True(off.Ok);
+            Assert.False(StatusSaysRecorder(_host));
+            Assert.False(_settings.FlightRecorderEnabled);
+        }
+        else
+        {
+            // Unprivileged environment: the failure must be honest — clear error, setting
+            // NOT flipped, recorder NOT reported as running.
+            Assert.Contains("flight recorder", on.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.False(_settings.FlightRecorderEnabled);
+            Assert.False(StatusSaysRecorder(_host));
+        }
+    }
+
     private BrowseEntry[] Browse(string prefix, string? query)
     {
         IpcResponse resp = _host.Handle(new IpcRequest

@@ -17,7 +17,7 @@ public sealed class StepWindHost : IDisposable
 {
     private readonly StepWindSettings _settings;
     private readonly VersionStore _store;
-    private readonly FlightRecorder? _flightRecorder;
+    private FlightRecorder? _flightRecorder; // swapped live by the settings toggle
     private readonly System.Threading.Timer _retentionTimer;
     private readonly Action<string>? _log;
     private readonly RealFileSystemActions _fs = new();
@@ -54,14 +54,10 @@ public sealed class StepWindHost : IDisposable
 
         if (settings.FlightRecorderEnabled)
         {
-            try
+            string? error = TryStartFlightRecorder();
+            if (error is not null)
             {
-                _flightRecorder = new FlightRecorder(settings.StoreRoot, FixedNtfsVolumes(), log: log,
-                    ignorePrefixes: new[] { StepWindSettings.DefaultRoot, settings.StoreRoot });
-            }
-            catch (Exception ex)
-            {
-                _log?.Invoke("flight recorder unavailable: " + ex.Message);
+                _log?.Invoke("flight recorder unavailable: " + error);
             }
         }
 
@@ -77,6 +73,40 @@ public sealed class StepWindHost : IDisposable
         // Retention + GC daily (and once shortly after start).
         _retentionTimer = new System.Threading.Timer(_ => RunRetention(), null,
             TimeSpan.FromMinutes(5), TimeSpan.FromHours(24));
+    }
+
+    /// <summary>Starts the flight recorder (USN + ETW). Returns null on success, else the reason.</summary>
+    private string? TryStartFlightRecorder()
+    {
+        if (_flightRecorder is not null)
+        {
+            return null;
+        }
+
+        try
+        {
+            _flightRecorder = new FlightRecorder(_settings.StoreRoot, FixedNtfsVolumes(), log: _log,
+                ignorePrefixes: new[] { StepWindSettings.DefaultRoot, _settings.StoreRoot });
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
+    }
+
+    private void StopFlightRecorder()
+    {
+        FlightRecorder? fr = _flightRecorder;
+        _flightRecorder = null;
+        try
+        {
+            fr?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _log?.Invoke("flight recorder stop: " + ex.Message);
+        }
     }
 
     /// <summary>Creates a watch engine from the current settings (exclusions applied).</summary>
@@ -142,13 +172,14 @@ public sealed class StepWindHost : IDisposable
 
     private List<TimelineEntry> BuildTimeline(int limit)
     {
-        if (_flightRecorder is null)
+        FlightRecorder? recorder = _flightRecorder; // local copy — the toggle can swap it
+        if (recorder is null)
         {
             return [];
         }
 
         var entries = new List<TimelineEntry>();
-        foreach (FileOperation op in _flightRecorder.Recent(limit))
+        foreach (FileOperation op in recorder.Recent(limit))
         {
             entries.Add(new TimelineEntry
             {
@@ -189,6 +220,7 @@ public sealed class StepWindHost : IDisposable
         public List<string>? ExcludedPrefixes { get; set; }
         public bool? AutoUpdateEnabled { get; set; }
         public bool? EncryptionEnabled { get; set; }
+        public bool? FlightRecorderEnabled { get; set; }
         public bool? TimelineProtectedOnly { get; set; }
         public int? RetentionKeepAllHours { get; set; }
         public int? RetentionHourlyDays { get; set; }
@@ -252,6 +284,27 @@ public sealed class StepWindHost : IDisposable
         if (patch.AutoUpdateEnabled is bool au)
         {
             _settings.AutoUpdateEnabled = au;
+        }
+
+        if (patch.FlightRecorderEnabled is bool fre && fre != _settings.FlightRecorderEnabled)
+        {
+            if (fre)
+            {
+                // Honest failure: if ETW/USN can't start (no privileges in a dev/console run),
+                // say so and leave the setting off rather than pretending.
+                string? error = TryStartFlightRecorder();
+                if (error is not null)
+                {
+                    return IpcResponse.Fail("could not start the flight recorder: " + error);
+                }
+            }
+            else
+            {
+                StopFlightRecorder();
+            }
+
+            _settings.FlightRecorderEnabled = fre;
+            _log?.Invoke($"flight recorder {(fre ? "started" : "stopped")}");
         }
 
         if (patch.TimelineProtectedOnly is bool tpo)
@@ -675,7 +728,7 @@ public sealed class StepWindHost : IDisposable
             _watch.Dispose();
         }
 
-        _flightRecorder?.Dispose();
+        StopFlightRecorder();
         _lifetime.Dispose();
     }
 

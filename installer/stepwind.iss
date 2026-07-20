@@ -34,8 +34,11 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\StepWind.exe
-; The auto-updater runs setup with /VERYSILENT; close + restart the GUI around the file swap.
-AppMutex=StepWind.App.SingleInstance
+; Let Restart Manager close + reopen the tray GUI around the file swap so its locked
+; StepWind.exe can be replaced. Deliberately NO AppMutex: with /SUPPRESSMSGBOXES the AppMutex
+; "app is running" prompt auto-answers Cancel and ABORTS the whole (silent auto-)update before
+; any file is copied — the exact bug that left the service binary stale. The service itself is
+; stopped in code (CurStepChanged, ssInstall) before the copy.
 CloseApplications=yes
 RestartApplications=yes
 
@@ -59,10 +62,29 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\StepWind.exe"; Tasks: desktop
 Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; \
   ValueName: "StepWind"; ValueData: """{app}\StepWind.exe"" --minimized"; Flags: uninsdeletevalue
 
+[Code]
+// The service holds its binaries locked while running. Files are copied at ssInstall, so the
+// service MUST be fully STOPPED before that -- otherwise an upgrade silently keeps the OLD
+// service binaries (setup reports success while StepWind.Service.exe stays stale, which also
+// means silent auto-updates never actually update the service). We stop it CLEANLY (sc stop,
+// which "sc stop" waits are async, hence the settle sleeps) -- NOT taskkill, because a forced
+// kill looks like a crash to the SCM and trips the failure-action auto-restart that would
+// re-lock the exe mid-copy. The unelevated tray GUI has no failure action, so it is killed.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep = ssInstall then
+  begin
+    Exec(ExpandConstant('{sys}\sc.exe'), 'stop StepWind', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(5000);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM StepWind.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(500);
+  end;
+end;
+
 [Run]
-; Stop any prior service instance before we (re)register — makes upgrades clean.
-Filename: "{app}\StepWind.Service.exe"; Parameters: "stop-service"; Flags: runhidden waituntilterminated
-; Register + start the background service.
+; Register + start the background service (its verb does stop/delete/create/start).
 Filename: "{app}\StepWind.Service.exe"; Parameters: "install-service"; Flags: runhidden waituntilterminated; StatusMsg: "Installing StepWind protection service..."
 ; Launch the tray app now (as the invoking user, unelevated where possible).
 Filename: "{app}\StepWind.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent runasoriginaluser
