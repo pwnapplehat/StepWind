@@ -9,6 +9,7 @@ public partial class TimelineView : UserControl
     public TimelineView()
     {
         InitializeComponent();
+        Motion.AnimateOnShow(this);
         // Reflect the persisted scope once the VM arrives (checked state isn't bindable
         // two-way across two radio buttons without extra converters).
         DataContextChanged += (_, _) =>

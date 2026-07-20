@@ -7,7 +7,11 @@ namespace StepWind.App.Views;
 
 public partial class SettingsView : UserControl
 {
-    public SettingsView() => InitializeComponent();
+    public SettingsView()
+    {
+        InitializeComponent();
+        Motion.AnimateOnShow(this);
+    }
 
     private MainViewModel Vm => (MainViewModel)DataContext;
 

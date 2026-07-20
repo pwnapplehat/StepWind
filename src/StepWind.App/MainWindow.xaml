@@ -64,6 +64,13 @@
                     <Style.Triggers>
                       <DataTrigger Binding="{Binding ServiceUp}" Value="True">
                         <Setter Property="Fill" Value="{StaticResource SW.Ok}"/>
+                        <!-- Living "protection active" heartbeat while the service is up. -->
+                        <DataTrigger.EnterActions>
+                          <BeginStoryboard Name="Pulse" Storyboard="{StaticResource StatusPulse}"/>
+                        </DataTrigger.EnterActions>
+                        <DataTrigger.ExitActions>
+                          <StopStoryboard BeginStoryboardName="Pulse"/>
+                        </DataTrigger.ExitActions>
                       </DataTrigger>
                     </Style.Triggers>
                   </Style>

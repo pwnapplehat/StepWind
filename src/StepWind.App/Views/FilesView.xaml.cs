@@ -6,7 +6,11 @@ namespace StepWind.App.Views;
 
 public partial class FilesView : UserControl
 {
-    public FilesView() => InitializeComponent();
+    public FilesView()
+    {
+        InitializeComponent();
+        Motion.AnimateOnShow(this);
+    }
 
     private MainViewModel Vm => (MainViewModel)DataContext;
 

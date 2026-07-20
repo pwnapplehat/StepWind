@@ -5,8 +5,23 @@
         WindowStartupLocation="CenterOwner" SizeToContent="Height" Width="440"
         Background="Transparent" AllowsTransparency="True"
         FontFamily="{StaticResource SW.Font.Text}">
-  <Border Background="{StaticResource SW.Card}" CornerRadius="12" BorderThickness="1"
-          BorderBrush="{StaticResource SW.Stroke}" Padding="22,18">
+  <Window.Triggers>
+    <EventTrigger RoutedEvent="Window.Loaded">
+      <BeginStoryboard>
+        <Storyboard>
+          <DoubleAnimation Storyboard.TargetName="DialogRoot" Storyboard.TargetProperty="Opacity"
+                           From="0" To="1" Duration="0:0:0.16"/>
+          <DoubleAnimation Storyboard.TargetName="DialogScale" Storyboard.TargetProperty="ScaleX"
+                           From="0.94" To="1" Duration="0:0:0.20" EasingFunction="{StaticResource EaseOut}"/>
+          <DoubleAnimation Storyboard.TargetName="DialogScale" Storyboard.TargetProperty="ScaleY"
+                           From="0.94" To="1" Duration="0:0:0.20" EasingFunction="{StaticResource EaseOut}"/>
+        </Storyboard>
+      </BeginStoryboard>
+    </EventTrigger>
+  </Window.Triggers>
+  <Border x:Name="DialogRoot" Background="{StaticResource SW.Card}" CornerRadius="12" BorderThickness="1"
+          BorderBrush="{StaticResource SW.Stroke}" Padding="22,18" RenderTransformOrigin="0.5,0.5">
+    <Border.RenderTransform><ScaleTransform x:Name="DialogScale" ScaleX="1" ScaleY="1"/></Border.RenderTransform>
     <StackPanel>
       <TextBlock x:Name="TitleText" FontFamily="{StaticResource SW.Font}" FontSize="16"
                  FontWeight="SemiBold" Foreground="{StaticResource SW.Text}"/>

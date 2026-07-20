@@ -6,7 +6,11 @@ namespace StepWind.App.Views;
 
 public partial class FoldersView : UserControl
 {
-    public FoldersView() => InitializeComponent();
+    public FoldersView()
+    {
+        InitializeComponent();
+        Motion.AnimateOnShow(this);
+    }
 
     private MainViewModel Vm => (MainViewModel)DataContext;
 

@@ -66,6 +66,12 @@ Initial release — an undo button for your whole PC.
   visual layer sits on standard accessible control plumbing, so keyboard navigation and
   screen readers keep working. A global panic hotkey — **Ctrl+Shift+Z** — opens StepWind
   from anywhere.
+- **Motion that feels premium, not busy:** views fade-and-rise on switch, list rows cascade
+  in as they load, the active nav indicator grows into place, buttons/cards respond with
+  smooth colour fades + a subtle press-scale and hover-lift, dialogs scale in, and the
+  "protection active" dot has a gentle heartbeat. Everything animates only opacity and
+  transforms (composited on the render thread) with short cubic ease-outs — so it stays
+  fluid and never spikes CPU/GPU the way animated blur would.
 - **Architecture:** an elevated background service (USN + ETW + engine + named-pipe API) with
   an unelevated WPF tray GUI over an ACL'd local pipe; explicit append-only wire-protocol ids
   so mixed-version GUI/service pairs mid-update can never execute the wrong command; a
