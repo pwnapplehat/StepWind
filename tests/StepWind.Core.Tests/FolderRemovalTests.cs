@@ -304,6 +304,35 @@ public class FolderRemovalTests : IDisposable
     }
 
     [Fact]
+    public void Auto_update_toggles_the_live_setting_both_ways()
+    {
+        // The service's update loop reads _settings.AutoUpdateEnabled every cycle, so the
+        // toggle only works if SetSettings actually flips the live instance (the bug was the
+        // loop only reading it once at boot). Prove the flag round-trips through IPC.
+        static bool AutoUpdate(StepWindHost host)
+        {
+            IpcResponse s = host.Handle(new IpcRequest { Command = IpcCommand.GetSettings });
+            return JsonDocument.Parse(s.Json!).RootElement.GetProperty("AutoUpdateEnabled").GetBoolean();
+        }
+
+        _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { AutoUpdateEnabled = false }),
+        });
+        Assert.False(AutoUpdate(_host));
+        Assert.False(_settings.AutoUpdateEnabled); // the live instance the loop reads
+
+        _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { AutoUpdateEnabled = true }),
+        });
+        Assert.True(AutoUpdate(_host));
+        Assert.True(_settings.AutoUpdateEnabled);
+    }
+
+    [Fact]
     public void Flight_recorder_toggles_live_or_fails_honestly()
     {
         static bool StatusSaysRecorder(StepWindHost host)

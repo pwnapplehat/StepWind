@@ -67,10 +67,11 @@ public sealed class StepWindWorker : BackgroundService
 
         _logger.LogInformation("StepWind service started; watching {Count} folder(s).", settings.WatchedFolders.Count);
 
-        if (settings.AutoUpdateEnabled)
-        {
-            _ = RunUpdateLoopAsync(stoppingToken);
-        }
+        // Always run the loop; it reads the LIVE setting each cycle. Starting it conditionally
+        // meant toggling auto-update at runtime did nothing until a restart (turn on → no loop;
+        // turn off → the loop kept updating). `settings` is the same instance the host mutates
+        // via SetSettings, so the flag is always current.
+        _ = RunUpdateLoopAsync(settings, stoppingToken);
 
         return Task.CompletedTask;
     }
@@ -103,8 +104,12 @@ public sealed class StepWindWorker : BackgroundService
         }
     }
 
-    /// <summary>Automatic silent updates: one check shortly after start, then daily.</summary>
-    private async Task RunUpdateLoopAsync(CancellationToken ct)
+    /// <summary>
+    /// Automatic silent updates: one check shortly after start, then daily — but only while the
+    /// setting is on. The loop always runs and re-reads the flag each cycle, so the Settings
+    /// toggle takes effect without a restart (and turning it off actually stops updates).
+    /// </summary>
+    private async Task RunUpdateLoopAsync(StepWindSettings settings, CancellationToken ct)
     {
         var updater = new UpdateService(msg => _logger.LogInformation("[update] {Message}", msg));
         try
@@ -112,7 +117,11 @@ public sealed class StepWindWorker : BackgroundService
             await Task.Delay(TimeSpan.FromMinutes(2), ct);
             while (!ct.IsCancellationRequested)
             {
-                await updater.CheckAndApplyAsync(ct);
+                if (settings.AutoUpdateEnabled)
+                {
+                    await updater.CheckAndApplyAsync(ct);
+                }
+
                 await Task.Delay(TimeSpan.FromHours(24), ct);
             }
         }

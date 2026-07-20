@@ -499,6 +499,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // status updates must never themselves send a settings patch.
             _flightRecorderOn = fr;
             OnChanged(nameof(FlightRecorderOn));
+            OnChanged(nameof(TimelineIsEmpty));
+            OnChanged(nameof(TimelineEmptyText));
         }
 
         _storeBytes = r.TryGetProperty("StoreBytes", out JsonElement sb) ? sb.GetInt64() : 0;
@@ -743,7 +745,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 NewPath = e.NewPath,
             });
         }
+
+        OnChanged(nameof(TimelineIsEmpty));
+        OnChanged(nameof(TimelineEmptyText));
     }
+
+    /// <summary>True when the timeline has nothing to show — drives the empty-state overlay.</summary>
+    public bool TimelineIsEmpty => Timeline.Count == 0;
+
+    /// <summary>Explains WHY the timeline is empty (recorder off vs simply no activity yet).</summary>
+    public string TimelineEmptyText => !_flightRecorderOn
+        ? "The flight recorder is off. Turn it on in Settings to record file operations across your drives."
+        : "No file activity recorded yet. Move, rename, or delete a file and it'll show up here — with one-click undo.";
 
     private static string DayLabel(DateTime local)
     {

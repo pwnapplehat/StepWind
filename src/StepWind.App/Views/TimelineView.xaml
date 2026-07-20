@@ -54,6 +54,7 @@
 
     <!-- The time river -->
     <Border Grid.Row="2" Style="{StaticResource SW.CardStyle}">
+      <Grid>
       <ListBox Style="{StaticResource SW.List}" ItemsSource="{Binding TimelineView}"
                app:SmoothScroll.Enabled="True" Padding="6,4">
         <ListBox.GroupStyle>
@@ -113,6 +114,17 @@
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
+
+      <!-- Empty state: explains WHY it's empty (recorder off vs no activity). -->
+      <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="20"
+                  Visibility="{Binding TimelineIsEmpty, Converter={StaticResource BoolToVis}}">
+        <ui:SymbolIcon Symbol="History24" FontSize="30" Foreground="{StaticResource SW.Text3}"
+                       HorizontalAlignment="Center"/>
+        <TextBlock Text="{Binding TimelineEmptyText}" FontSize="12.5" TextAlignment="Center"
+                   Foreground="{StaticResource SW.Text2}" Margin="0,10,0,0"
+                   TextWrapping="Wrap" MaxWidth="360"/>
+      </StackPanel>
+      </Grid>
     </Border>
   </Grid>
 </UserControl>

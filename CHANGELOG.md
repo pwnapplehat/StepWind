@@ -70,6 +70,11 @@ Initial release — an undo button for your whole PC.
   Settings to start/stop whole-machine operation recording live, no restart. If ETW/USN
   can't start (e.g. an unprivileged run) the switch fails honestly and stays off rather than
   lying.
+- **Auto-update toggle now takes effect at runtime.** The update loop only read the setting
+  once at service start, so flipping it in Settings did nothing until a restart (turn on →
+  no checks; turn off → checks kept running). The loop now re-reads the live setting each
+  cycle. Found in a full UI→service audit alongside a timeline empty-state that explains why
+  the timeline is blank (recorder off vs. no activity yet) instead of showing an empty card.
 - **Fixed a serious installer/auto-update bug:** the setup declared `AppMutex`, so with
   `/SUPPRESSMSGBOXES` the "app is running" prompt auto-cancelled and the whole silent update
   **aborted before copying a single file** — upgrades (and every silent auto-update) kept the
