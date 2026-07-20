@@ -161,10 +161,47 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set { _flightRecorderOn = value; OnChanged(); }
     }
 
+    /// <summary>
+    /// Two-way: flipping the switch pushes the change to the service, which re-encodes the
+    /// existing store in the background (readable throughout). If the push fails, the next
+    /// settings load snaps the switch back to the service's truth.
+    /// </summary>
     public bool EncryptionOn
     {
         get => _encryptionOn;
-        private set { _encryptionOn = value; OnChanged(); }
+        set
+        {
+            if (_encryptionOn == value)
+            {
+                return;
+            }
+
+            _encryptionOn = value;
+            OnChanged();
+            if (!_loadingSettings)
+            {
+                _ = PushEncryptionAsync(value);
+            }
+        }
+    }
+
+    private long _storeBytes;
+    private bool _reEncoding;
+
+    /// <summary>"12 versions · 3.4 MB" for the storage row.</summary>
+    public string StorageText
+    {
+        get
+        {
+            string versions = $"{TotalVersions:N0} version{(TotalVersions == 1 ? "" : "s")}";
+            return _storeBytes > 0 ? $"{versions} · {FormatSize(_storeBytes)}" : versions;
+        }
+    }
+
+    public bool ReEncoding
+    {
+        get => _reEncoding;
+        private set { _reEncoding = value; OnChanged(); }
     }
 
     /// <summary>Two-way: flipping the switch pushes the change to the service immediately.</summary>
@@ -250,9 +287,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         ProtectingCount = roots;
         TotalVersions = versions;
         FlightRecorderOn = fr;
+        _storeBytes = r.TryGetProperty("StoreBytes", out JsonElement sb) ? sb.GetInt64() : 0;
+        OnChanged(nameof(StorageText));
+        ReEncoding = r.TryGetProperty("ReEncoding", out JsonElement re) && re.GetBoolean();
         Status = roots == 0
             ? "No folders protected yet"
-            : $"Protecting {roots} folder{(roots == 1 ? "" : "s")} · {versions:N0} versions kept";
+            : $"Protecting {roots} folder{(roots == 1 ? "" : "s")} · {versions:N0} versions · {FormatSize(Math.Max(0, _storeBytes))}";
         return roots;
     }
 
@@ -358,6 +398,16 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         string json = JsonSerializer.Serialize(new { AutoUpdateEnabled = enabled });
         await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.SetSettings, Arg1 = json });
+    }
+
+    private async Task PushEncryptionAsync(bool enabled)
+    {
+        string json = JsonSerializer.Serialize(new { EncryptionEnabled = enabled });
+        await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.SetSettings, Arg1 = json });
+        // Re-load: on success this confirms the value; on failure (old service, key error)
+        // it snaps the switch back to what the service actually has.
+        await LoadSettingsAsync();
+        await RefreshStatusOnlyAsync();
     }
 
     private async Task RefreshStatusOnlyAsync()

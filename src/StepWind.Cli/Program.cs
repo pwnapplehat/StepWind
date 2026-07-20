@@ -18,8 +18,28 @@ return args.FirstOrDefault()?.ToLowerInvariant() switch
     "probe" => Probe(),
     "settings" => DumpSettings(),
     "recent" => DumpRecent(),
+    "set-encryption" => SetEncryption(args.ElementAtOrDefault(1)),
     _ => Help(),
 };
+
+// Toggles store encryption on the running service (diagnostic; the GUI has a switch).
+static int SetEncryption(string? state)
+{
+    if (state is not ("on" or "off"))
+    {
+        Console.WriteLine("usage: stepwind-cli set-encryption on|off");
+        return 1;
+    }
+
+    var client = new StepWind.Core.Ipc.PipeClient();
+    StepWind.Core.Ipc.IpcResponse r = client.SendAsync(new StepWind.Core.Ipc.IpcRequest
+    {
+        Command = StepWind.Core.Ipc.IpcCommand.SetSettings,
+        Arg1 = System.Text.Json.JsonSerializer.Serialize(new { EncryptionEnabled = state == "on" }),
+    }).GetAwaiter().GetResult();
+    Console.WriteLine(r.Ok ? r.Json : "ERR: " + r.Error);
+    return r.Ok ? 0 : 1;
+}
 
 // Queries the running service's GetRecentFiles over the pipe (diagnostic).
 static int DumpRecent()

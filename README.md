@@ -50,9 +50,12 @@ a lightly-edited 2 GB file doesn't cost 2 GB per save.
   re-saves don't add redundant versions.
 - **Crash-safe, content-verified store** (atomic writes; every chunk re-hashed on read; GC is
   serialized against captures so it can never sweep an in-flight chunk).
-- **Optional encryption at rest** (AES-256-GCM) with the key sealed by Windows DPAPI at machine
-  scope — the unattended service uses it with no passphrase, and a stolen/offline drive can't be
-  read elsewhere. (Not designed to hide data from another admin on *this* machine.)
+- **Encryption at rest is a live toggle** (AES-256-GCM, key sealed by Windows DPAPI at machine
+  scope — no passphrase needed, and a stolen/offline drive can't be read elsewhere). Flip it
+  any time: the store re-encodes in the background while every version stays restorable, a
+  crash mid-pass resumes on next start, and toggling off decrypts back the same way. File
+  contents are encrypted; the index of names/dates is not. (Not designed to hide data from
+  another admin on *this* machine.)
 - **Retention + garbage collection** (tiered like Time Machine) so it never eats your disk.
 - **Catch-up while off**: on startup (and when you add a folder) StepWind reconciles what
   changed or appeared while it wasn't running; USN wrap/overflow detection resyncs instead of
@@ -99,14 +102,16 @@ tests/                 deterministic Core tests
 
 ## Verified
 
-- **70 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
-  integrity, encryption round-trip & tamper rejection, DPAPI key stability, USN operation
-  reconstruction (rename vs move via parent-FRN delta; POSIX-unlink deletes detected at the
-  marker-rename instant, with the late FileDelete deduplicated and hex-named user files never
-  misclassified), version-level dedup of identical re-saves, startup reconciliation
-  (baseline + catch-up + idempotency), GC-vs-capture interleaving integrity, reversal safety,
-  retention tiers + GC, exclusions (incl. cloud placeholders), watch capture, and the full
-  IPC capture→history→restore round-trip.
+- **76 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+  integrity, encryption round-trip & tamper rejection, DPAPI key stability, live encryption
+  toggling (mixed-store reads, background re-encode convergence in both directions,
+  interrupted-migration recovery, storage byte tracking, the IPC toggle end-to-end), USN
+  operation reconstruction (rename vs move via parent-FRN delta; POSIX-unlink deletes
+  detected at the marker-rename instant, with the late FileDelete deduplicated and hex-named
+  user files never misclassified), version-level dedup of identical re-saves, startup
+  reconciliation (baseline + catch-up + idempotency), GC-vs-capture interleaving integrity,
+  reversal safety, retention tiers + GC, exclusions (incl. cloud placeholders), watch
+  capture, and the full IPC capture→history→restore round-trip.
 - **Real-hardware E2E** (elevated): a scripted create/rename/move/delete is reconstructed
   from the live journal, the move is reversed (folder back in one click), and a version is
   restored byte-exact after overwrite+delete — all through the production classes. The

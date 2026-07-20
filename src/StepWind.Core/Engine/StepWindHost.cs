@@ -22,12 +22,16 @@ public sealed class StepWindHost : IDisposable
     private readonly Action<string>? _log;
     private readonly RealFileSystemActions _fs = new();
     private readonly object _watchLock = new();
+    private readonly MigratingBlobCodec? _migCodec;
+    private readonly CancellationTokenSource _lifetime = new();
+    private volatile bool _reEncoding;
     private WatchEngine _watch;
 
     public StepWindHost(StepWindSettings settings, IBlobCodec codec, Action<string>? log = null)
     {
         _settings = settings;
         _log = log;
+        _migCodec = codec as MigratingBlobCodec; // live encryption toggling needs this codec
 
         // The store holds copies of the user's documents under %ProgramData% — lock it to
         // SYSTEM + Administrators before writing anything (no-op for dev/console runs).
@@ -37,6 +41,14 @@ public sealed class StepWindHost : IDisposable
             new BlobStore(settings.StoreRoot, codec),
             new VersionLog(System.IO.Path.Combine(settings.StoreRoot, "versions.jsonl")));
         _store.Blobs.CleanTemp(); // drop any half-written blobs from a previous crash
+
+        // A crash mid-re-encode leaves the marker dirty; the mixed store is fully readable
+        // regardless, and this resumes the pass so it converges to the target format.
+        if (_migCodec is not null && ReadCodecState().EndsWith(":dirty", StringComparison.Ordinal))
+        {
+            _log?.Invoke("resuming interrupted store re-encode");
+            StartReEncode();
+        }
 
         _watch = BuildWatch();
 
@@ -115,8 +127,15 @@ public sealed class StepWindHost : IDisposable
             s.VersionsCaptured,
             s.LastCaptureUtc,
             TotalVersions = _store.Log.All.Count,
+            StoreBytes = _store.Blobs.TotalBytes + SafeFileLength(System.IO.Path.Combine(_settings.StoreRoot, "versions.jsonl")),
+            ReEncoding = _reEncoding,
             _settings.WatchedFolders,
         };
+    }
+
+    private static long SafeFileLength(string path)
+    {
+        try { return File.Exists(path) ? new FileInfo(path).Length : 0; } catch { return 0; }
     }
 
     private List<TimelineEntry> BuildTimeline(int limit)
@@ -160,6 +179,7 @@ public sealed class StepWindHost : IDisposable
         public List<string>? WatchedFolders { get; set; }
         public List<string>? ExcludedPrefixes { get; set; }
         public bool? AutoUpdateEnabled { get; set; }
+        public bool? EncryptionEnabled { get; set; }
     }
 
     private IpcResponse ApplySettings(string json)
@@ -168,6 +188,27 @@ public sealed class StepWindHost : IDisposable
         if (patch is null)
         {
             return IpcResponse.Fail("bad settings payload");
+        }
+
+        if (patch.EncryptionEnabled is bool enc && enc != _settings.EncryptionEnabled)
+        {
+            if (_migCodec is null)
+            {
+                return IpcResponse.Fail("encryption can't be changed in this configuration");
+            }
+
+            try
+            {
+                _migCodec.SetEncryptNew(enc); // creates/loads the DPAPI-sealed key on enable
+            }
+            catch (Exception ex)
+            {
+                return IpcResponse.Fail("could not " + (enc ? "enable" : "disable") + " encryption: " + ex.Message);
+            }
+
+            _settings.EncryptionEnabled = enc;
+            _log?.Invoke($"encryption {(enc ? "enabled" : "disabled")} — re-encoding existing history in the background");
+            StartReEncode();
         }
 
         bool foldersChanged = false;
@@ -320,6 +361,60 @@ public sealed class StepWindHost : IDisposable
         return IpcResponse.Success(JsonSerializer.Serialize(r));
     }
 
+    // ── Store re-encode (encryption toggle) ────────────────────────────────────────────
+    // The dirty/clean marker survives crashes: dirty means "some blobs may still be in the
+    // old format", which is harmless for reads (Get accepts both) but must eventually
+    // converge — so a dirty marker at startup resumes the pass.
+
+    private string CodecStatePath => System.IO.Path.Combine(_settings.StoreRoot, "codec.state");
+
+    private string ReadCodecState()
+    {
+        try { return File.Exists(CodecStatePath) ? File.ReadAllText(CodecStatePath) : ""; }
+        catch { return ""; }
+    }
+
+    private void WriteCodecState(bool dirty)
+    {
+        try
+        {
+            File.WriteAllText(CodecStatePath,
+                (_settings.EncryptionEnabled ? "cipher" : "plain") + (dirty ? ":dirty" : ":clean"));
+        }
+        catch (Exception ex)
+        {
+            _log?.Invoke("codec state write failed: " + ex.Message);
+        }
+    }
+
+    private void StartReEncode()
+    {
+        WriteCodecState(dirty: true);
+        _reEncoding = true;
+        CancellationToken ct = _lifetime.Token;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                int converted = _store.Blobs.ReEncodeAll(ct);
+                WriteCodecState(dirty: false);
+                _log?.Invoke($"store re-encode complete — {converted} blob(s) converted to {(_settings.EncryptionEnabled ? "encrypted" : "plain")} format");
+            }
+            catch (OperationCanceledException)
+            {
+                // service stopping mid-pass — the dirty marker resumes it next start
+            }
+            catch (Exception ex)
+            {
+                _log?.Invoke("store re-encode failed (will retry next start): " + ex.Message);
+            }
+            finally
+            {
+                _reEncoding = false;
+            }
+        }, CancellationToken.None);
+    }
+
     private RetentionResult RunRetention()
     {
         // Exclusive with captures: GC's mark-and-sweep must not race a capture's
@@ -364,6 +459,7 @@ public sealed class StepWindHost : IDisposable
 
     public void Dispose()
     {
+        _lifetime.Cancel();
         _retentionTimer.Dispose();
         lock (_watchLock)
         {
@@ -371,6 +467,7 @@ public sealed class StepWindHost : IDisposable
         }
 
         _flightRecorder?.Dispose();
+        _lifetime.Dispose();
     }
 
     private sealed class RealFileSystemActions : IFileSystemActions

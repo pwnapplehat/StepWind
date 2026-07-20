@@ -76,27 +76,30 @@ public sealed class StepWindWorker : BackgroundService
     }
 
     /// <summary>
-    /// Encryption-at-rest when enabled: a machine-DPAPI-sealed AES key drives an AES-GCM codec;
-    /// otherwise the compressed, ACL-guarded codec. Falls back to plain if key sealing ever
-    /// fails so protection never stops over an encryption hiccup.
+    /// Always a <see cref="MigratingBlobCodec"/>, so encryption is a live setting: the GUI can
+    /// toggle it at any time and the store re-encodes itself in the background (both formats
+    /// stay readable throughout). The AES key is created lazily on first enable and sealed
+    /// with machine-scope DPAPI. Falls back to plain-only if key material is unavailable so
+    /// protection never stops over an encryption hiccup.
     /// </summary>
     private IBlobCodec SelectCodec(StepWindSettings settings)
     {
-        if (!settings.EncryptionEnabled)
-        {
-            return new GzipBlobCodec();
-        }
+        IBlobCodec CipherFactory() => new AesGcmBlobCodec(KeyProtector.LoadOrCreate(settings.StoreRoot));
 
         try
         {
-            byte[] key = KeyProtector.LoadOrCreate(settings.StoreRoot);
-            _logger.LogInformation("store encryption enabled (AES-256-GCM, machine-sealed key)");
-            return new AesGcmBlobCodec(key);
+            var codec = new MigratingBlobCodec(new GzipBlobCodec(), CipherFactory, settings.EncryptionEnabled);
+            if (settings.EncryptionEnabled)
+            {
+                _logger.LogInformation("store encryption enabled (AES-256-GCM, machine-sealed key)");
+            }
+
+            return codec;
         }
         catch (Exception ex)
         {
             _logger.LogWarning("encryption unavailable ({Message}); using compressed store", ex.Message);
-            return new GzipBlobCodec();
+            return new MigratingBlobCodec(new GzipBlobCodec(), CipherFactory, encryptNew: false);
         }
     }
 

@@ -16,10 +16,17 @@ Initial release — an undo button for your whole PC.
   chunked, deduplicated, compressed, crash-safe content-addressed storage, tiered retention +
   mark-sweep GC, and byte-exact restore that never overwrites current work. Identical
   re-saves are deduplicated at the version level, so history stays meaningful.
-- **Encryption at rest (optional):** AES-256-GCM with the key sealed by Windows DPAPI at
-  machine scope — the unattended service uses it with no passphrase; a stolen/offline drive
-  can't be read elsewhere. Verified live: zero plaintext in blobs, byte-exact restore after
-  service restart.
+- **Encryption at rest — a live toggle, not a create-time decision:** flip the switch in
+  Settings and the store re-encodes itself in the background (AES-256-GCM, key sealed by
+  Windows DPAPI at machine scope — no passphrase needed by the unattended service; a
+  stolen/offline drive can't be read elsewhere). Both formats stay readable throughout —
+  every decode is verified against the chunk's content hash, a crash mid-re-encode resumes
+  on next start, and toggling off decrypts back the same way. Verified live over the pipe:
+  key sealed on first enable, zero plaintext in blobs, both eras of history restorable,
+  clean convergence in both directions. File contents are encrypted; the index of names
+  and dates is not.
+- **Storage visibility:** Settings and the status footer show exactly what the history
+  costs on disk (live byte tracking — no directory rescans), alongside the version count.
 - **Reliability from day one:** startup reconciliation captures whatever changed or appeared
   while StepWind wasn't running (and baselines newly added folders immediately); USN
   journal-wrap detection resyncs instead of silently missing changes; an overflowed watcher

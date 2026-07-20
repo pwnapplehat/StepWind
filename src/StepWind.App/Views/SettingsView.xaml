@@ -91,34 +91,16 @@
                            Foreground="{StaticResource SW.Text}"/>
                 <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
                            TextWrapping="Wrap"
-                           Text="AES-256-GCM with a key sealed by Windows (machine scope). Chosen when the store is created — a stolen or offline drive can't read your history."/>
+                           Text="AES-256-GCM with a key sealed by Windows (machine scope) — a stolen or offline drive can't read your history. Toggling re-encodes existing versions in the background; everything stays restorable throughout. File contents are encrypted; the index of names and dates is not."/>
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
+                            Visibility="{Binding ReEncoding, Converter={StaticResource BoolToVis}}">
+                  <Ellipse Width="7" Height="7" Fill="{StaticResource SW.Cyan}" VerticalAlignment="Center"/>
+                  <TextBlock Text="Re-encoding your history in the background…" FontSize="11"
+                             Foreground="{StaticResource SW.Cyan}" Margin="6,0,0,0"/>
+                </StackPanel>
               </StackPanel>
-              <Border Grid.Column="1" CornerRadius="6" Padding="9,3" VerticalAlignment="Center">
-                <Border.Style>
-                  <Style TargetType="Border">
-                    <Setter Property="Background" Value="#14FFFFFF"/>
-                    <Style.Triggers>
-                      <DataTrigger Binding="{Binding EncryptionOn}" Value="True">
-                        <Setter Property="Background" Value="#1A34D399"/>
-                      </DataTrigger>
-                    </Style.Triggers>
-                  </Style>
-                </Border.Style>
-                <TextBlock FontSize="11" FontWeight="SemiBold">
-                  <TextBlock.Style>
-                    <Style TargetType="TextBlock">
-                      <Setter Property="Text" Value="Off"/>
-                      <Setter Property="Foreground" Value="{StaticResource SW.Text2}"/>
-                      <Style.Triggers>
-                        <DataTrigger Binding="{Binding EncryptionOn}" Value="True">
-                          <Setter Property="Text" Value="On"/>
-                          <Setter Property="Foreground" Value="{StaticResource SW.Ok}"/>
-                        </DataTrigger>
-                      </Style.Triggers>
-                    </Style>
-                  </TextBlock.Style>
-                </TextBlock>
-              </Border>
+              <ui:ToggleSwitch Grid.Column="1" VerticalAlignment="Center"
+                               IsChecked="{Binding EncryptionOn}"/>
             </Grid>
 
             <Rectangle Height="1" Fill="{StaticResource SW.StrokeSoft}" Margin="0,12"/>
@@ -129,13 +111,14 @@
                 <ColumnDefinition Width="Auto"/>
               </Grid.ColumnDefinitions>
               <StackPanel>
-                <TextBlock Text="Versions kept" FontSize="13" FontWeight="Medium"
+                <TextBlock Text="History storage" FontSize="13" FontWeight="Medium"
                            Foreground="{StaticResource SW.Text}"/>
                 <TextBlock FontSize="11.5" Foreground="{StaticResource SW.Text3}" Margin="0,3,0,0"
-                           Text="Everything for 48 hours, hourly for a week, daily for six months."/>
+                           TextWrapping="Wrap"
+                           Text="Deduplicated and compressed. Retention keeps everything for 48 hours, hourly for a week, daily for six months — old versions are garbage-collected automatically."/>
               </StackPanel>
-              <TextBlock Grid.Column="1" Text="{Binding TotalVersions, StringFormat=N0}"
-                         FontFamily="{StaticResource SW.Font}" FontSize="16" FontWeight="SemiBold"
+              <TextBlock Grid.Column="1" Text="{Binding StorageText}" Margin="16,0,0,0"
+                         FontFamily="{StaticResource SW.Font}" FontSize="14" FontWeight="SemiBold"
                          Foreground="{StaticResource SW.Cyan}" VerticalAlignment="Center"/>
             </Grid>
           </StackPanel>
