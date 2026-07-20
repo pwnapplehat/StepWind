@@ -27,6 +27,11 @@ Initial release — an undo button for your whole PC.
   and dates is not.
 - **Storage visibility:** Settings and the status footer show exactly what the history
   costs on disk (live byte tracking — no directory rescans), alongside the version count.
+- **Removing a protected folder never deletes its history:** it only stops new captures —
+  everything already saved stays restorable from File versions until retention ages it out
+  (and the Folders page says so). Restores of files whose folder is no longer protected
+  land in `Public Documents\StepWind Restored` — an earlier build dropped them inside the
+  ACL-locked store where a standard user couldn't open their own recovered file.
 - **Reliability from day one:** startup reconciliation captures whatever changed or appeared
   while StepWind wasn't running (and baselines newly added folders immediately); USN
   journal-wrap detection resyncs instead of silently missing changes; an overflowed watcher

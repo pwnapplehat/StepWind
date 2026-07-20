@@ -351,8 +351,19 @@ public sealed class StepWindHost : IDisposable
             }
         }
 
-        // Fallback: a restored files folder under the store.
-        return System.IO.Path.Combine(_settings.StoreRoot, "restored", relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar));
+        // The folder is no longer protected (or was renamed), so its original root is
+        // unknown. Land the restore somewhere every interactive user can actually open —
+        // NOT inside the store, which is ACL'd to SYSTEM+Admins and would lock the user
+        // out of their own recovered file.
+        string publicDocs = Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments);
+        if (string.IsNullOrEmpty(publicDocs))
+        {
+            publicDocs = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StepWind");
+        }
+
+        return System.IO.Path.Combine(publicDocs, "StepWind Restored",
+            relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar));
     }
 
     private IpcResponse RunRetentionCommand()

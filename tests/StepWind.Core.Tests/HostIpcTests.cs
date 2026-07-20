@@ -126,6 +126,45 @@ public class HostIpcTests : IDisposable
     }
 
     [Fact]
+    public async Task Removing_a_folder_keeps_history_and_restores_to_an_accessible_path()
+    {
+        // Capture a version while the folder is protected…
+        string file = Path.Combine(_watch, "keepme.txt");
+        File.WriteAllText(file, "history must survive folder removal");
+        await WaitForCapture("Docs/keepme.txt");
+
+        // …then stop protecting the folder (what the ✕ on a folder card sends).
+        IpcResponse set = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { WatchedFolders = new List<string>() }),
+        });
+        Assert.True(set.Ok);
+
+        // History is NOT deleted: still listed and still restorable.
+        IpcResponse hist = _host.Handle(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = "Docs/keepme.txt" });
+        VersionEntry[] versions = JsonSerializer.Deserialize<VersionEntry[]>(hist.Json!)!;
+        Assert.NotEmpty(versions);
+
+        IpcResponse recent = _host.Handle(new IpcRequest { Command = IpcCommand.GetRecentFiles });
+        Assert.Contains("keepme.txt", recent.Json);
+
+        // The restore of an un-protected folder's file must land somewhere the user can
+        // open (Public Documents fallback) — never inside the ACL-locked store.
+        IpcResponse restore = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.RestoreVersion,
+            Arg1 = versions[0].VersionId,
+        });
+        Assert.True(restore.Ok);
+        string restoredPath = JsonDocument.Parse(restore.Json!).RootElement.GetProperty("RestoredPath").GetString()!;
+        Assert.DoesNotContain(Path.Combine(_root, "store"), restoredPath, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("StepWind Restored", restoredPath);
+        Assert.Equal("history must survive folder removal", File.ReadAllText(restoredPath));
+        File.Delete(restoredPath); // tidy the shared Public Documents location
+    }
+
+    [Fact]
     public void SetSettings_adds_a_watched_folder_and_getsettings_reflects_it()
     {
         string extra = Path.Combine(_root, "Extra");

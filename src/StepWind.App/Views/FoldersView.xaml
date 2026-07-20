@@ -35,7 +35,8 @@
           A version is captured a couple of seconds after a file settles. Identical re-saves
           are skipped, build junk and caches are excluded automatically, and tiered retention
           keeps the store small. Restores never overwrite your current file — the recovered
-          version lands next to it.
+          version lands next to it. Removing a folder only stops new captures: the versions
+          already saved stay restorable from File versions until retention ages them out.
         </TextBlock>
       </StackPanel>
     </Border>
