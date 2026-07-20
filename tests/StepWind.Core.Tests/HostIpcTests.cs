@@ -95,6 +95,37 @@ public class HostIpcTests : IDisposable
     }
 
     [Fact]
+    public async Task GetRecentFiles_lists_distinct_files_most_recent_first()
+    {
+        string a = Path.Combine(_watch, "alpha.txt");
+        string b = Path.Combine(_watch, "beta.txt");
+        File.WriteAllText(a, "a1");
+        await WaitForCapture("Docs/alpha.txt");
+        File.WriteAllText(b, "b1");
+        await WaitForCapture("Docs/beta.txt");
+        File.WriteAllText(b, "b2"); // second version of beta
+        // Wait until beta actually has its 2nd version (debounce quiet period is ~2s).
+        for (int i = 0; i < 40; i++)
+        {
+            if (_host.Handle(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = "Docs/beta.txt" }) is { Ok: true } h
+                && JsonSerializer.Deserialize<VersionEntry[]>(h.Json!)!.Length >= 2)
+            {
+                break;
+            }
+
+            await Task.Delay(250);
+        }
+
+        IpcResponse resp = _host.Handle(new IpcRequest { Command = IpcCommand.GetRecentFiles });
+        Assert.True(resp.Ok);
+        RecentFileEntry[] files = JsonSerializer.Deserialize<RecentFileEntry[]>(resp.Json!)!;
+
+        Assert.Equal(2, files.Length);              // distinct files, not versions
+        Assert.Equal("Docs/beta.txt", files[0].RelativePath); // most recently changed first
+        Assert.True(files[0].VersionCount >= 2);
+    }
+
+    [Fact]
     public void SetSettings_adds_a_watched_folder_and_getsettings_reflects_it()
     {
         string extra = Path.Combine(_root, "Extra");

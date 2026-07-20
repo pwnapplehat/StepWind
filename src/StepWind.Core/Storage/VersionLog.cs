@@ -26,12 +26,44 @@ public sealed class VersionLog
         Load();
     }
 
-    public IReadOnlyList<FileVersion> All => _versions;
+    /// <summary>
+    /// A point-in-time snapshot of all versions. Copies under the lock so callers (the pipe
+    /// thread serving GetHistory, the retention pass) never enumerate the list while a capture
+    /// on the watch thread is mutating it — the classic "collection modified" crash.
+    /// </summary>
+    public IReadOnlyList<FileVersion> All
+    {
+        get { lock (_appendLock) { return [.. _versions]; } }
+    }
 
-    /// <summary>All versions of one file, oldest first.</summary>
+    /// <summary>All versions of one file, oldest first (snapshotted under the lock).</summary>
     public IReadOnlyList<FileVersion> History(string relativePath)
-        => [.. _versions.Where(v => v.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase))
-                        .OrderBy(v => v.CapturedUtc)];
+    {
+        lock (_appendLock)
+        {
+            return [.. _versions.Where(v => v.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase))
+                                .OrderBy(v => v.CapturedUtc)];
+        }
+    }
+
+    /// <summary>The most recently captured version of a file, or null if none (used for dedup).</summary>
+    public FileVersion? LatestFor(string relativePath)
+    {
+        lock (_appendLock)
+        {
+            FileVersion? latest = null;
+            foreach (FileVersion v in _versions)
+            {
+                if (v.RelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase)
+                    && (latest is null || v.CapturedUtc >= latest.CapturedUtc))
+                {
+                    latest = v;
+                }
+            }
+
+            return latest;
+        }
+    }
 
     /// <summary>Durably appends a version and returns it.</summary>
     public FileVersion Append(FileVersion version)

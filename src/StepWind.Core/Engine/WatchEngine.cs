@@ -28,8 +28,9 @@ public sealed class WatchEngine : IDisposable
     private readonly System.Threading.Timer _drainTimer;
     private readonly Action<string>? _log;
 
-    private long _versionsCaptured;
+    private long _versionsCaptured; // Interlocked — touched by the drain timer, reconcile, and error-recovery threads
     private DateTime? _lastCaptureUtc;
+    private volatile bool _disposed;
 
     public WatchEngine(VersionStore store, PathExclusions exclusions, IEnumerable<string> roots,
         Action<string>? log = null, TimeSpan? quietPeriod = null)
@@ -59,14 +60,58 @@ public sealed class WatchEngine : IDisposable
         {
             IncludeSubdirectories = true,
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size | NotifyFilters.CreationTime,
-            InternalBufferSize = 64 * 1024,
+            // A generous buffer reduces overflow under bursts (bulk copy, unzip). On overflow
+            // the OS drops events, so Error recovery below re-syncs via a reconcile pass.
+            InternalBufferSize = 256 * 1024,
         };
         w.Changed += OnChanged;
         w.Created += OnChanged;
         w.Renamed += (_, e) => OnPath(e.FullPath);
-        w.Error += (_, e) => _log?.Invoke("watcher error on " + root + ": " + e.GetException().Message);
+        w.Error += (_, e) => OnWatcherError(root, w, e.GetException());
         w.EnableRaisingEvents = true;
         _watchers.Add(w);
+    }
+
+    /// <summary>
+    /// A watcher can die (buffer overflow under a burst, the root going briefly offline). We
+    /// dispose it, rebuild it, and run a reconcile pass so anything missed during the gap is
+    /// still captured — a dropped OS event must never mean a silently lost version.
+    /// </summary>
+    private void OnWatcherError(string root, FileSystemWatcher dead, Exception ex)
+    {
+        _log?.Invoke($"watcher on {root} errored ({ex.Message}); rebuilding + reconciling");
+        try
+        {
+            dead.EnableRaisingEvents = false;
+            _watchers.Remove(dead);
+            dead.Dispose();
+        }
+        catch
+        {
+            // already gone
+        }
+
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(root))
+            {
+                StartWatching(root);
+            }
+        }
+        catch (Exception rebuildEx)
+        {
+            _log?.Invoke($"watcher rebuild failed for {root}: {rebuildEx.Message}");
+        }
+
+        _ = Task.Run(() =>
+        {
+            try { Reconcile(); } catch { /* best effort */ }
+        });
     }
 
     private void OnChanged(object sender, FileSystemEventArgs e) => OnPath(e.FullPath);
@@ -114,14 +159,18 @@ public sealed class WatchEngine : IDisposable
             }
 
             _store.Capture(fullPath, rel);
-            _versionsCaptured++;
+            Interlocked.Increment(ref _versionsCaptured);
             _lastCaptureUtc = DateTime.UtcNow;
             return true;
         }
         catch (IOException)
         {
-            // Locked/being-written — requeue for one more quiet cycle. The service also has a
-            // VSS path for files held open exclusively.
+            // The file is mid-write or exclusively locked right now. We open with full share
+            // (read/write/delete), so the common case — apps that keep a shared read handle
+            // (Office, most editors) — already succeeds; this path is the minority that holds
+            // an exclusive lock (e.g. an open Outlook PST). Requeue: it captures on the next
+            // quiet cycle, and at the latest when the app releases the file (and on the startup
+            // reconcile pass). Snapshot-based reads of exclusively-locked files are not done.
             _debouncer.Touch(fullPath, DateTime.UtcNow);
             return false;
         }
@@ -131,6 +180,91 @@ public sealed class WatchEngine : IDisposable
             return false;
         }
     }
+
+    /// <summary>
+    /// Startup catch-up: walks every watched root and captures files that changed (or appeared)
+    /// while StepWind wasn't running — comparing each file's last-write time against the newest
+    /// version already stored. This is what makes "protection resumes where it left off" true
+    /// rather than a claim: without it, anything edited while the service was down would have no
+    /// version. Runs on a background thread; content-level dedup in the store means unchanged
+    /// files (same bytes, touched mtime) never create a redundant version. Best-effort per file.
+    /// </summary>
+    public int Reconcile(CancellationToken ct = default)
+    {
+        int captured = 0;
+        foreach (string root in _roots)
+        {
+            IEnumerable<string> files;
+            try
+            {
+                files = Directory.EnumerateFiles(root, "*", new EnumerationOptions
+                {
+                    IgnoreInaccessible = true,
+                    RecurseSubdirectories = true,
+                    AttributesToSkip = FileAttributes.System,
+                });
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (string path in files)
+            {
+                if (ct.IsCancellationRequested)
+                {
+                    return captured;
+                }
+
+                try
+                {
+                    if (_exclusions.IsExcludedByDirectory(path) || _exclusions.IsExcludedByExtension(path)
+                        || _exclusions.IsUnderExcludedPrefix(path))
+                    {
+                        continue;
+                    }
+
+                    var info = new FileInfo(path);
+                    if (!_exclusions.ShouldVersion(path, info.Attributes, info.Length))
+                    {
+                        continue;
+                    }
+
+                    string? rel = RelativeToRoot(path);
+                    if (rel is null)
+                    {
+                        continue;
+                    }
+
+                    // Skip files whose newest stored version already reflects the current
+                    // on-disk write time — nothing changed while we were away.
+                    FileVersion? latest = _store.Log.LatestFor(NormalizeRel(rel));
+                    if (latest is not null && info.LastWriteTimeUtc <= latest.ModifiedUtc)
+                    {
+                        continue;
+                    }
+
+                    _store.Capture(path, rel, latest is null ? "baseline" : "catch-up");
+                    captured++;
+                }
+                catch
+                {
+                    // one unreadable file never stops the sweep
+                }
+            }
+        }
+
+        if (captured > 0)
+        {
+            Interlocked.Add(ref _versionsCaptured, captured);
+            _lastCaptureUtc = DateTime.UtcNow;
+            _log?.Invoke($"catch-up: captured {captured} changed/new file(s) since last run");
+        }
+
+        return captured;
+    }
+
+    private static string NormalizeRel(string rel) => rel.Replace('\\', '/').TrimStart('/');
 
     /// <summary>Path relative to whichever watched root contains it (portable '/' form).</summary>
     public string? RelativeToRoot(string fullPath)
@@ -149,11 +283,19 @@ public sealed class WatchEngine : IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _drainTimer.Dispose();
-        foreach (FileSystemWatcher w in _watchers)
+        foreach (FileSystemWatcher w in _watchers.ToArray())
         {
-            w.EnableRaisingEvents = false;
-            w.Dispose();
+            try
+            {
+                w.EnableRaisingEvents = false;
+                w.Dispose();
+            }
+            catch
+            {
+                // already disposed by error recovery
+            }
         }
     }
 }

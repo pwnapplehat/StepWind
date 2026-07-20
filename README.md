@@ -46,16 +46,24 @@ a lightly-edited 2 GB file doesn't cost 2 GB per save.
 
 ## Built right from day one
 
-- **Content-defined chunking + dedup** so history is cheap even for huge files.
-- **Crash-safe, content-verified store** (atomic writes; every chunk re-hashed on read).
-- **Optional passphrase encryption** (AES-256-GCM) on top of an ACL-locked store.
+- **Content-defined chunking + dedup** so history is cheap even for huge files, and identical
+  re-saves don't add redundant versions.
+- **Crash-safe, content-verified store** (atomic writes; every chunk re-hashed on read; GC is
+  serialized against captures so it can never sweep an in-flight chunk).
+- **Optional encryption at rest** (AES-256-GCM) with the key sealed by Windows DPAPI at machine
+  scope — the unattended service uses it with no passphrase, and a stolen/offline drive can't be
+  read elsewhere. (Not designed to hide data from another admin on *this* machine.)
 - **Retention + garbage collection** (tiered like Time Machine) so it never eats your disk.
-- **Catch-up while off**: the USN journal fills in what changed when StepWind wasn't running,
-  with wrap/overflow detection that resyncs instead of silently missing changes.
+- **Catch-up while off**: on startup (and when you add a folder) StepWind reconciles what
+  changed or appeared while it wasn't running; USN wrap/overflow detection resyncs instead of
+  silently missing changes; a watcher that overflows under a burst is rebuilt and reconciled.
 - **Restores never overwrite** — a recovered version lands beside your current work, never on top.
 - **Reversal is guarded** — it refuses to move something back onto a now-occupied path.
+- **Panic hotkey** — Ctrl+Shift+Z opens StepWind from anywhere the instant something goes wrong.
 - **Smart exclusions** — build junk (`node_modules`, `target`…), caches, and — importantly —
   OneDrive online-only files are skipped (versioning a placeholder would force a full download).
+  Files held under an *exclusive* lock (e.g. an open Outlook PST) are captured when the app
+  releases them / on the next reconcile — StepWind doesn't force snapshots of locked files.
 - **Honest architecture**: an elevated background **service** does the privileged work
   (journal + ETW); the tray **GUI** runs unelevated and talks to it over a local, ACL'd pipe.
 - **Fully automatic, silent updates** — because the service already runs as SYSTEM, it
@@ -76,16 +84,22 @@ tests/                 deterministic Core tests
 
 ## Verified
 
-- **55 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
-  integrity, encryption round-trip & tamper rejection, USN operation reconstruction
-  (rename vs move via parent-FRN delta, POSIX-unlink delete detection), reversal safety,
+- **70 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+  integrity, encryption round-trip & tamper rejection, DPAPI key stability, USN operation
+  reconstruction (rename vs move via parent-FRN delta; POSIX-unlink deletes detected at the
+  marker-rename instant, with the late FileDelete deduplicated and hex-named user files never
+  misclassified), version-level dedup of identical re-saves, startup reconciliation
+  (baseline + catch-up + idempotency), GC-vs-capture interleaving integrity, reversal safety,
   retention tiers + GC, exclusions (incl. cloud placeholders), watch capture, and the full
   IPC capture→history→restore round-trip.
 - **Real-hardware E2E** (elevated): a scripted create/rename/move/delete is reconstructed
   from the live journal, the move is reversed (folder back in one click), and a version is
-  restored byte-exact after overwrite+delete — all through the production classes.
-- **Live demo**: the real service running, the timeline populated with an actual incident,
-  and Undo working (see the screenshot above).
+  restored byte-exact after overwrite+delete — all through the production classes. The
+  delete's journal shape (bare-hex marker rename; FileDelete lagging until the last handle
+  closes) was measured on real hardware and is what the detector is built against.
+- **Live demo**: the real service running with encryption on (key sealed, zero plaintext in
+  blobs), the timeline populated with an actual incident, Undo working, and a UI-automation
+  pass driving recent-files → version history → Restore (see the screenshot above).
 
 ## Install
 

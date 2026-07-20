@@ -11,17 +11,24 @@ public static class IpcProtocol
     public const int Version = 1;
 }
 
+/// <summary>
+/// Wire protocol command ids. These cross a process boundary (GUI ↔ service, possibly from
+/// DIFFERENT builds mid-update), so values are explicit and append-only: never renumber,
+/// never insert in the middle — a remapped id makes an old service silently execute the
+/// wrong command.
+/// </summary>
 public enum IpcCommand
 {
-    Ping,
-    GetStatus,
-    GetTimeline,     // recent operations (flight recorder)
-    GetHistory,      // versions of one file
-    ReverseOperation,
-    RestoreVersion,
-    GetSettings,
-    SetSettings,
-    RunRetention,
+    Ping = 0,
+    GetStatus = 1,
+    GetTimeline = 2,      // recent operations (flight recorder)
+    GetHistory = 3,       // versions of one file
+    ReverseOperation = 4,
+    RestoreVersion = 5,
+    GetSettings = 6,
+    SetSettings = 7,
+    RunRetention = 8,
+    GetRecentFiles = 9,   // distinct files with saved history, most-recently-changed first
 }
 
 public sealed record IpcRequest
@@ -72,4 +79,12 @@ public sealed record VersionEntry
 
     /// <summary>Opaque id the GUI passes back to RestoreVersion.</summary>
     public required string VersionId { get; init; }
+}
+
+/// <summary>A protected file with saved history, for the GUI's recent-files quick list.</summary>
+public sealed record RecentFileEntry
+{
+    public required string RelativePath { get; init; }
+    public required DateTime LastCapturedUtc { get; init; }
+    public required int VersionCount { get; init; }
 }

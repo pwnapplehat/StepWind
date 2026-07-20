@@ -1,6 +1,8 @@
 ﻿using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using StepWind.App.ViewModels;
 using Wpf.Ui.Appearance;
@@ -10,14 +12,64 @@ namespace StepWind.App;
 
 public partial class MainWindow : FluentWindow
 {
+    // Global "oh no" hotkey: Ctrl+Shift+Z brings StepWind up from anywhere the instant you
+    // realize something went wrong — no hunting for the tray icon mid-panic.
+    private const int HotkeyId = 0xB001;
+    private const uint ModControl = 0x0002, ModShift = 0x0004, ModNoRepeat = 0x4000;
+    private const uint VkZ = 0x5A;
+
     private readonly MainViewModel _viewModel = new();
     private bool _reallyExit;
+    private bool _hotkeyRegistered;
 
     public MainWindow()
     {
         InitializeComponent();
         DataContext = _viewModel;
         Tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    private void RegisterGlobalHotkey()
+    {
+        if (_hotkeyRegistered)
+        {
+            return;
+        }
+
+        var helper = new WindowInteropHelper(this);
+        IntPtr handle = helper.EnsureHandle();
+        HwndSource? source = HwndSource.FromHwnd(handle);
+        source?.AddHook(WndProc);
+        // No-repeat so holding the keys doesn't spam; failure is non-fatal (another app may
+        // already own the combo) — the tray menu's "Oh no" item still works.
+        _hotkeyRegistered = RegisterHotKey(handle, HotkeyId, ModControl | ModShift | ModNoRepeat, VkZ);
+    }
+
+    private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        const int WmHotkey = 0x0312;
+        if (msg == WmHotkey && wParam.ToInt32() == HotkeyId)
+        {
+            ShowFromTray();
+            handled = true;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private void ShowFromTray()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+        Topmost = true;
+        Topmost = false; // bounce to the foreground without staying pinned
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -46,6 +98,8 @@ public partial class MainWindow : FluentWindow
         {
             Background = solid;
         }
+
+        RegisterGlobalHotkey();
     }
 
     /// <summary>Settings → Personalization → Colors → "Transparency effects".</summary>
@@ -72,16 +126,11 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private void OnTrayOpen(object sender, RoutedEventArgs e)
-    {
-        Show();
-        WindowState = WindowState.Normal;
-        Activate();
-    }
+    private void OnTrayOpen(object sender, RoutedEventArgs e) => ShowFromTray();
 
     private async void OnOhNo(object sender, RoutedEventArgs e)
     {
-        OnTrayOpen(sender, e);
+        ShowFromTray();
         await _viewModel.RefreshAsync();
     }
 
@@ -124,6 +173,15 @@ public partial class MainWindow : FluentWindow
         }
     }
 
+    private async void OnRecentFileSelected(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (RecentList.SelectedItem is ViewModels.RecentFileRow row)
+        {
+            HistoryHint.Text = "History for: " + row.RelativePath;
+            await _viewModel.LoadHistoryAsync(row.RelativePath);
+        }
+    }
+
     private async void OnAddFolder(object sender, RoutedEventArgs e)
     {
         var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Choose a folder to protect" };
@@ -144,6 +202,11 @@ public partial class MainWindow : FluentWindow
     private void OnTrayExit(object sender, RoutedEventArgs e)
     {
         _reallyExit = true;
+        if (_hotkeyRegistered)
+        {
+            try { UnregisterHotKey(new WindowInteropHelper(this).Handle, HotkeyId); } catch { }
+        }
+
         Tray.Dispose();
         Close();
         System.Windows.Application.Current.Shutdown();

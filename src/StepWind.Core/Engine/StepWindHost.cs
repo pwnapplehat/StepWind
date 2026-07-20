@@ -29,6 +29,10 @@ public sealed class StepWindHost : IDisposable
         _settings = settings;
         _log = log;
 
+        // The store holds copies of the user's documents under %ProgramData% — lock it to
+        // SYSTEM + Administrators before writing anything (no-op for dev/console runs).
+        StoreAcl.Harden(settings.StoreRoot, log);
+
         _store = new VersionStore(
             new BlobStore(settings.StoreRoot, codec),
             new VersionLog(System.IO.Path.Combine(settings.StoreRoot, "versions.jsonl")));
@@ -48,6 +52,15 @@ public sealed class StepWindHost : IDisposable
                 _log?.Invoke("flight recorder unavailable: " + ex.Message);
             }
         }
+
+        // Catch up on anything that changed while the service was stopped (background so
+        // startup isn't blocked by a large first-run scan).
+        WatchEngine watchForReconcile = _watch;
+        _ = Task.Run(() =>
+        {
+            try { watchForReconcile.Reconcile(); }
+            catch (Exception ex) { _log?.Invoke("catch-up failed: " + ex.Message); }
+        });
 
         // Retention + GC daily (and once shortly after start).
         _retentionTimer = new System.Threading.Timer(_ => RunRetention(), null,
@@ -76,6 +89,7 @@ public sealed class StepWindHost : IDisposable
                 IpcCommand.GetStatus => Ok(BuildStatus()),
                 IpcCommand.GetTimeline => Ok(BuildTimeline(request.Limit)),
                 IpcCommand.GetHistory => Ok(BuildHistory(request.Arg1 ?? "")),
+                IpcCommand.GetRecentFiles => Ok(BuildRecentFiles(request.Limit)),
                 IpcCommand.ReverseOperation => ReverseOperation(request.Arg1 ?? ""),
                 IpcCommand.RestoreVersion => RestoreVersion(request.Arg1 ?? "", request.Arg2),
                 IpcCommand.RunRetention => RunRetentionCommand(),
@@ -183,14 +197,24 @@ public sealed class StepWindHost : IDisposable
 
         if (foldersChanged)
         {
+            WatchEngine rebuilt;
             lock (_watchLock)
             {
                 WatchEngine old = _watch;
                 _watch = BuildWatch(); // start watching the new set…
                 old.Dispose();          // …then tear down the old watchers
+                rebuilt = _watch;
             }
 
             _log?.Invoke($"watched folders updated ({_settings.WatchedFolders.Count})");
+
+            // A newly added folder needs a baseline immediately (its files existed before we
+            // watched it), so reconcile in the background rather than waiting for edits.
+            _ = Task.Run(() =>
+            {
+                try { rebuilt.Reconcile(); }
+                catch (Exception ex) { _log?.Invoke("folder catch-up failed: " + ex.Message); }
+            });
         }
 
         return Ok(BuildSettings());
@@ -220,6 +244,21 @@ public sealed class StepWindHost : IDisposable
         }
 
         return list;
+    }
+
+    /// <summary>Distinct protected files with history, most-recently-changed first (quick list).</summary>
+    private List<RecentFileEntry> BuildRecentFiles(int limit)
+    {
+        return [.. _store.Log.All
+            .GroupBy(v => v.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new RecentFileEntry
+            {
+                RelativePath = g.Key,
+                LastCapturedUtc = g.Max(v => v.CapturedUtc),
+                VersionCount = g.Count(),
+            })
+            .OrderByDescending(f => f.LastCapturedUtc)
+            .Take(limit <= 0 ? 100 : limit)];
     }
 
     private IpcResponse ReverseOperation(string opId)
@@ -282,7 +321,10 @@ public sealed class StepWindHost : IDisposable
 
     private RetentionResult RunRetention()
     {
-        RetentionResult r = Retention.Apply(_store.Log, _store.Blobs, _settings.Retention, DateTime.UtcNow);
+        // Exclusive with captures: GC's mark-and-sweep must not race a capture's
+        // write-blob→append-version window (see VersionStore._maintenanceGate).
+        RetentionResult r = _store.RunExclusive(
+            () => Retention.Apply(_store.Log, _store.Blobs, _settings.Retention, DateTime.UtcNow));
         _log?.Invoke($"retention: kept {r.VersionsKept}/{r.VersionsBefore} versions, swept {r.BlobsSwept} blobs");
         return r;
     }

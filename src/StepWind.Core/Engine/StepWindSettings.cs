@@ -26,7 +26,10 @@ public sealed class StepWindSettings
     /// <summary>Automatic silent updates, applied by the SYSTEM service (no UAC). Default on.</summary>
     public bool AutoUpdateEnabled { get; set; } = true;
 
-    /// <summary>Encrypt the store with a passphrase (key derived; salt stored in the repo).</summary>
+    /// <summary>
+    /// Encrypt the store at rest (AES-256-GCM; random key sealed with machine-scope DPAPI by
+    /// <see cref="KeyProtector"/> so the unattended service needs no passphrase).
+    /// </summary>
     public bool EncryptionEnabled { get; set; }
 
     /// <summary>Largest single file to version, bytes (0 = unlimited).</summary>

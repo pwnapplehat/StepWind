@@ -28,6 +28,14 @@ public sealed class VersionRow
     public required string VersionId { get; init; }
 }
 
+/// <summary>A recently-changed protected file for the quick-pick list.</summary>
+public sealed class RecentFileRow
+{
+    public required string RelativePath { get; init; }
+    public required string DisplayName { get; init; }
+    public required string Detail { get; init; }
+}
+
 /// <summary>
 /// Talks to the elevated service over the pipe and drives the window: connection status, the
 /// live operation timeline (with one-click reverse), and per-file version history (with
@@ -53,6 +61,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public ObservableCollection<TimelineRow> Timeline { get; } = [];
 
     public ObservableCollection<VersionRow> History { get; } = [];
+
+    public ObservableCollection<RecentFileRow> RecentFiles { get; } = [];
 
     public string Status
     {
@@ -113,9 +123,42 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         await LoadSettingsAsync();
         await LoadTimelineAsync();
+        await LoadRecentFilesAsync();
         if (!string.IsNullOrWhiteSpace(_historyPath))
         {
             await LoadHistoryAsync(_historyPath);
+        }
+    }
+
+    private string _recentFingerprint = "";
+
+    public async Task LoadRecentFilesAsync()
+    {
+        IpcResponse resp = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetRecentFiles, Limit = 100 });
+        if (!resp.Ok || resp.Json is null)
+        {
+            return;
+        }
+
+        // The auto-refresh timer calls this every few seconds; rebuilding the list resets the
+        // user's selection and scroll, so only touch it when the content actually changed.
+        if (resp.Json == _recentFingerprint)
+        {
+            return;
+        }
+
+        _recentFingerprint = resp.Json;
+        RecentFileEntry[] files = JsonSerializer.Deserialize<RecentFileEntry[]>(resp.Json) ?? [];
+        RecentFiles.Clear();
+        foreach (RecentFileEntry f in files)
+        {
+            string name = f.RelativePath.Contains('/') ? f.RelativePath[(f.RelativePath.LastIndexOf('/') + 1)..] : f.RelativePath;
+            RecentFiles.Add(new RecentFileRow
+            {
+                RelativePath = f.RelativePath,
+                DisplayName = name,
+                Detail = $"{f.RelativePath} · {f.VersionCount} version(s) · {f.LastCapturedUtc.ToLocalTime():MMM d, HH:mm}",
+            });
         }
     }
 
@@ -181,6 +224,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    private string _timelineFingerprint = "";
+
     private async Task LoadTimelineAsync()
     {
         IpcResponse resp = await _pipe.SendAsync(new IpcRequest { Command = IpcCommand.GetTimeline, Limit = 200 });
@@ -189,6 +234,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
+        // Same reason as the recent-files guard: the 3s auto-refresh must not reset the
+        // user's scroll position unless something actually happened.
+        if (resp.Json == _timelineFingerprint)
+        {
+            return;
+        }
+
+        _timelineFingerprint = resp.Json;
         TimelineEntry[] entries = JsonSerializer.Deserialize<TimelineEntry[]>(resp.Json) ?? [];
         Timeline.Clear();
         foreach (TimelineEntry e in entries)

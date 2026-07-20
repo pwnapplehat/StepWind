@@ -4,12 +4,12 @@ using System.Security.Cryptography;
 namespace StepWind.Core.Storage;
 
 /// <summary>
-/// Optional passphrase encryption: compress, then AES-256-GCM. The key is derived once from
-/// the user's passphrase + a per-repo random salt (see <see cref="DeriveKey"/>); a fresh
-/// random 12-byte nonce is generated per blob and prepended, with the 16-byte GCM tag
-/// appended, so every stored blob authenticates itself on read (tamper = failure, not
-/// silent garbage). Losing the passphrase means the history can't be read — the UI warns
-/// about this before enabling it.
+/// Encryption-at-rest codec: compress, then AES-256-GCM. In production the 32-byte key comes
+/// from <see cref="KeyProtector"/> (random, sealed with machine-scope DPAPI so the unattended
+/// service needs no passphrase); <see cref="DeriveKey"/> also supports passphrase-derived keys
+/// (PBKDF2-SHA256 + per-repo salt) for portable/exported stores. A fresh random 12-byte nonce
+/// is generated per blob and prepended, with the 16-byte GCM tag appended, so every stored
+/// blob authenticates itself on read (tamper = failure, not silent garbage).
 ///
 /// On-disk blob layout:  [nonce:12][ciphertext:N][tag:16]
 /// </summary>

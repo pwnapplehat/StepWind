@@ -17,8 +17,19 @@ return args.FirstOrDefault()?.ToLowerInvariant() switch
     "e2e" => E2E(),
     "probe" => Probe(),
     "settings" => DumpSettings(),
+    "recent" => DumpRecent(),
     _ => Help(),
 };
+
+// Queries the running service's GetRecentFiles over the pipe (diagnostic).
+static int DumpRecent()
+{
+    var client = new StepWind.Core.Ipc.PipeClient();
+    StepWind.Core.Ipc.IpcResponse r = client.SendAsync(
+        new StepWind.Core.Ipc.IpcRequest { Command = StepWind.Core.Ipc.IpcCommand.GetRecentFiles, Limit = 50 }).GetAwaiter().GetResult();
+    Console.WriteLine(r.Ok ? r.Json : "ERR: " + r.Error);
+    return r.Ok ? 0 : 1;
+}
 
 // Queries the running service's GetSettings over the pipe (diagnostic).
 static int DumpSettings()
@@ -100,9 +111,9 @@ static int E2E()
         // --- reconstruct through the production reader, waiting for the async journal ---
         var reconstructor = new OperationReconstructor(reader.ResolveDirectory);
         IReadOnlyList<FileOperation> ops = [];
-        for (int attempt = 0; attempt < 40; attempt++)
+        for (int attempt = 0; attempt < 100; attempt++)
         {
-            Thread.Sleep(250);
+            Thread.Sleep(300);
             (List<UsnRecord> records, _) = reader.Read(journalId, startUsn);
             ops = reconstructor.Reconstruct(records);
             if (ops.Any(o => o.Kind == OperationKind.Delete && o.Name.Equals("thesis-final.docx", StringComparison.OrdinalIgnoreCase)))

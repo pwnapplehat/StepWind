@@ -69,6 +69,60 @@ public class OperationReconstructorTests
     }
 
     [Fact]
+    public void Posix_delete_is_emitted_at_marker_rename_even_if_filedelete_never_arrives()
+    {
+        // Windows 26200 reality (measured with a held shared-delete handle): the marker is
+        // bare hex embedding the file's own FRN, and the FileDelete record only lands when
+        // the last handle closes — potentially minutes later. The user saw the file vanish
+        // at the marker rename, so the Delete op must exist WITHOUT the FileDelete record.
+        // FileFrn = 500 = 0x1F4 → marker embeds "00000000000001F4".
+        var records = new[]
+        {
+            Rec(FileFrn, DirA, UsnReason.FileCreate | UsnReason.Close, "report.xlsx", usn: 1),
+            Rec(FileFrn, DirA, UsnReason.RenameOldName, "report.xlsx", usn: 2),
+            Rec(FileFrn, 29, UsnReason.RenameNewName, "00000000000001F4175DB297", usn: 3),
+            // no FileDelete record at all in this read window
+        };
+
+        IReadOnlyList<FileOperation> ops = new OperationReconstructor(Resolve).Reconstruct(records);
+        FileOperation del = Assert.Single(ops, o => o.Kind == OperationKind.Delete);
+        Assert.Equal("report.xlsx", del.Name);
+        Assert.EndsWith(@"ProjectX\report.xlsx", del.OldPath);
+        Assert.DoesNotContain(ops, o => o.Kind is OperationKind.Rename or OperationKind.Move);
+    }
+
+    [Fact]
+    public void Late_filedelete_after_marker_rename_does_not_duplicate_the_delete()
+    {
+        var records = new[]
+        {
+            Rec(FileFrn, DirA, UsnReason.RenameOldName, "report.xlsx", usn: 1),
+            Rec(FileFrn, 29, UsnReason.RenameNewName, "00000000000001F4175DB297", usn: 2),
+            Rec(FileFrn, 29, UsnReason.FileDelete | UsnReason.RenameNewName | UsnReason.Close, "00000000000001F4175DB297", usn: 3),
+        };
+
+        IReadOnlyList<FileOperation> ops = new OperationReconstructor(Resolve).Reconstruct(records);
+        Assert.Single(ops, o => o.Kind == OperationKind.Delete); // exactly one, not two
+    }
+
+    [Fact]
+    public void A_users_hex_named_file_is_not_mistaken_for_a_delete_marker()
+    {
+        // 24 hex chars but the first 16 don't match the record's FRN — e.g. a git-object-like
+        // name. Must be treated as a normal rename, never as a POSIX delete.
+        var records = new[]
+        {
+            Rec(FileFrn, DirA, UsnReason.RenameOldName, "temp.bin", usn: 1),
+            Rec(FileFrn, DirA, UsnReason.RenameNewName | UsnReason.Close, "AABBCCDDEEFF001122334455", usn: 2),
+        };
+
+        IReadOnlyList<FileOperation> ops = new OperationReconstructor(Resolve).Reconstruct(records);
+        FileOperation op = Assert.Single(ops);
+        Assert.Equal(OperationKind.Rename, op.Kind);
+        Assert.DoesNotContain(ops, o => o.Kind == OperationKind.Delete);
+    }
+
+    [Fact]
     public void Emits_create_for_a_simple_new_file()
     {
         var records = new[] { Rec(FileFrn, DirA, UsnReason.FileCreate | UsnReason.DataExtend | UsnReason.Close, "new.txt", usn: 1) };

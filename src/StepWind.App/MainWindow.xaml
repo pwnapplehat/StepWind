@@ -27,7 +27,7 @@
       <tb:TaskbarIcon.ContextMenu>
         <ContextMenu>
           <MenuItem Header="Open StepWind" Click="OnTrayOpen"/>
-          <MenuItem Header="Oh no — show recent changes" Click="OnOhNo"/>
+          <MenuItem Header="Oh no — show recent changes  (Ctrl+Shift+Z)" Click="OnOhNo"/>
           <Separator/>
           <MenuItem Header="Exit" Click="OnTrayExit"/>
         </ContextMenu>
@@ -161,6 +161,7 @@
           <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
           <Grid Margin="14,4,10,6">
@@ -172,10 +173,27 @@
             <ui:Button Grid.Column="1" Content="Browse a file…" Appearance="Primary" FontSize="12"
                        Padding="10,4" Click="OnBrowseFile"/>
           </Grid>
-          <TextBlock Grid.Row="1" Margin="14,0,10,8" FontSize="12" Foreground="{StaticResource Brush.Muted}"
+          <TextBlock Grid.Row="1" Margin="14,0,10,6" FontSize="12" Foreground="{StaticResource Brush.Muted}"
                      TextWrapping="Wrap" x:Name="HistoryHint"
-                     Text="Pick any file in a protected folder to see every saved version — and restore one, even if the file was overwritten or deleted."/>
-          <ListBox Grid.Row="2" ItemsSource="{Binding History}" BorderThickness="0" Background="Transparent"
+                     Text="Pick a recently-changed file below, or Browse to any file — then restore any saved version, even if it was overwritten or deleted."/>
+
+          <!-- Recently changed protected files: click one to load its history (no picker needed). -->
+          <ListBox Grid.Row="2" x:Name="RecentList" ItemsSource="{Binding RecentFiles}" BorderThickness="0"
+                   Background="Transparent" MaxHeight="150" HorizontalContentAlignment="Stretch" Margin="0,0,0,4"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                   SelectionChanged="OnRecentFileSelected">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="8,4">
+                  <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding Detail}" FontSize="11" Foreground="{StaticResource Brush.Muted}"
+                             TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+
+          <ListBox Grid.Row="3" ItemsSource="{Binding History}" BorderThickness="0" Background="Transparent"
                    HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.ItemTemplate>
               <DataTemplate>
