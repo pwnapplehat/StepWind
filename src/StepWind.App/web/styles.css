@@ -89,12 +89,12 @@ body {
 
 #brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 18px; }
 .brand-mark {
-  width: 34px; height: 34px; border-radius: 10px;
-  display: grid; place-items: center;
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.16), rgba(34, 211, 238, 0.1));
-  border: 1px solid rgba(129, 140, 248, 0.25);
-  box-shadow: 0 0 24px rgba(99, 102, 241, 0.18);
+  width: 34px; height: 34px; border-radius: 9px;
+  display: grid; place-items: center; overflow: hidden;
+  /* The real icon is a finished rounded-square tile — a soft brand glow only, no extra frame. */
+  box-shadow: 0 0 22px rgba(99, 102, 241, 0.16);
 }
+.brand-mark img { display: block; border-radius: 9px; }
 .brand-name { font-family: var(--font-display); font-size: 15px; font-weight: 600; letter-spacing: 0.1px; }
 .brand-sub { font-size: 10.5px; color: var(--text-3); margin-top: 1px; }
 
