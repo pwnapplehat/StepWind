@@ -28,7 +28,11 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   re-parse that restores the backup automatically if verification fails. Disconnect (also
   one click) removes exactly our entry and nothing else. Repair shows up automatically when
   a connected tool points at a stale StepWind location. Manual copy-paste config stays
-  available for MCP clients we don't auto-detect.
+  available for MCP clients we don't auto-detect. The path written into configs is always
+  SPACELESS (a copy of the server ships at `%ProgramData%\StepWind\bin`): several MCP
+  clients — Cursor among them, verified from its own logs — spawn the stdio command through
+  cmd.exe without quoting, so a `C:\Program Files\...` command executes `C:\Program` and
+  dies with "not recognized as an internal or external command".
 - **Flight recorder (all drives):** tails the NTFS USN journal, reconstructs a plain-English
   operation timeline (rename vs move via parent-FRN delta), attributes each operation to its
   process via ETW, and reverses a move/rename in one click (no stored content needed).

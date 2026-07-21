@@ -33,6 +33,69 @@ public static class McpInstaller
     private const int MaxBackupsPerClient = 10;
 
     /// <summary>
+    /// Picks the exe path we write into client configs. THE RULE: no spaces, ever. Several MCP
+    /// clients (Cursor included — verified from its logs) spawn the command through cmd.exe
+    /// WITHOUT quoting, so "C:\Program Files\...\StepWind.Mcp.exe" executes 'C:\Program' and
+    /// dies with "not recognized as an internal or external command". Order of preference:
+    ///
+    ///  1. The spaceless copy the installer puts at %ProgramData%\StepWind\bin (canonical);
+    ///  2. the exe beside the app, as-is, if its path has no spaces (dev tree, portable);
+    ///  3. the 8.3 short form of the beside-the-app path (works for both shell and direct
+    ///     spawns because it IS a real path) — when the volume still generates short names;
+    ///  4. the long path, as a last resort (direct-spawn clients still work).
+    /// </summary>
+    public static string ResolveServerExe(string besideAppExe)
+    {
+        string canonical = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "StepWind", "bin", "StepWind.Mcp.exe");
+        return ResolveServerExe(besideAppExe, canonical);
+    }
+
+    /// <summary>Testable core of <see cref="ResolveServerExe(string)"/>.</summary>
+    internal static string ResolveServerExe(string besideAppExe, string spacelessCandidate)
+    {
+        if (!spacelessCandidate.Contains(' ') && File.Exists(spacelessCandidate))
+        {
+            return spacelessCandidate;
+        }
+
+        if (!besideAppExe.Contains(' '))
+        {
+            return besideAppExe;
+        }
+
+        if (File.Exists(besideAppExe))
+        {
+            string shortPath = TryGetShortPath(besideAppExe);
+            if (!shortPath.Contains(' '))
+            {
+                return shortPath;
+            }
+        }
+
+        return besideAppExe;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetShortPathNameW(string longPath, char[] shortPath, uint bufferLength);
+
+    /// <summary>8.3 form of a path, or the input unchanged if the volume doesn't provide one.</summary>
+    internal static string TryGetShortPath(string path)
+    {
+        try
+        {
+            var buffer = new char[520];
+            uint len = GetShortPathNameW(path, buffer, (uint)buffer.Length);
+            return len is > 0 and < 520 ? new string(buffer, 0, (int)len) : path;
+        }
+        catch (Exception)
+        {
+            return path;
+        }
+    }
+
+    /// <summary>
     /// Builds the full target list for this machine and probes each one: does the tool look
     /// installed, and does its config already contain our entry?
     /// </summary>

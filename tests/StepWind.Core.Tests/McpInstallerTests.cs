@@ -396,6 +396,62 @@ public class McpInstallerTests : IDisposable
         Assert.Equal(_exe, root["mcpServers"]!["stepwind"]!["command"]!.GetValue<string>());
     }
 
+    // --------------------------- server exe path: never with spaces ---------------------------
+    // Cursor (and others) spawn the stdio command through cmd.exe WITHOUT quoting, so
+    // "C:\Program Files\...\StepWind.Mcp.exe" executes 'C:\Program' and dies. The path we
+    // write into configs must therefore be spaceless whenever one can possibly be provided.
+
+    [Fact]
+    public void ResolveServerExe_prefers_the_spaceless_programdata_copy()
+    {
+        string spaceless = Path.Combine(_root, "bin", "StepWind.Mcp.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(spaceless)!);
+        File.WriteAllText(spaceless, "x");
+
+        string result = McpInstaller.ResolveServerExe(@"C:\Program Files\StepWind\StepWind.Mcp.exe", spaceless);
+
+        Assert.Equal(spaceless, result);
+        Assert.DoesNotContain(" ", result);
+    }
+
+    [Fact]
+    public void ResolveServerExe_ignores_a_missing_canonical_copy()
+    {
+        string missing = Path.Combine(_root, "bin", "StepWind.Mcp.exe");
+        string besideApp = Path.Combine(_root, "app", "StepWind.Mcp.exe"); // no spaces in _root
+
+        Assert.Equal(besideApp, McpInstaller.ResolveServerExe(besideApp, missing));
+    }
+
+    [Fact]
+    public void ResolveServerExe_shortens_a_spacey_path_via_8dot3_when_the_file_exists()
+    {
+        string spacey = Path.Combine(_root, "Program Files Clone", "StepWind.Mcp.exe");
+        Directory.CreateDirectory(Path.GetDirectoryName(spacey)!);
+        File.WriteAllText(spacey, "x");
+        string missingCanonical = Path.Combine(_root, "bin", "StepWind.Mcp.exe");
+
+        string result = McpInstaller.ResolveServerExe(spacey, missingCanonical);
+
+        // 8.3 names can be disabled per-volume; when they are, the long path is the honest
+        // best-effort answer. When they aren't, the result must be the spaceless alias to
+        // the SAME file.
+        if (result != spacey)
+        {
+            Assert.DoesNotContain(" ", result);
+            Assert.True(File.Exists(result), "short path must still resolve to the file");
+        }
+    }
+
+    [Fact]
+    public void ResolveServerExe_returns_a_nonexistent_spacey_path_unchanged()
+    {
+        string ghost = Path.Combine(_root, "No Such Dir", "StepWind.Mcp.exe");
+        string missingCanonical = Path.Combine(_root, "bin", "StepWind.Mcp.exe");
+
+        Assert.Equal(ghost, McpInstaller.ResolveServerExe(ghost, missingCanonical));
+    }
+
     // ------------------------------------ detection ------------------------------------
 
     [Fact]

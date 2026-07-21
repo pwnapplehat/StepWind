@@ -478,12 +478,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
         typeof(MainViewModel).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0.0";
 
     /// <summary>
-    /// The MCP server exe path, resolved from THIS process's own install location rather than
-    /// a hardcoded "Program Files" path — correct regardless of where the user chose to install
-    /// (Inno Setup lets that be customized), since StepWind.Mcp.exe always ships beside StepWind.exe.
+    /// The MCP server exe path written into AI tools' configs. Resolved through
+    /// <see cref="McpInstaller.ResolveServerExe(string)"/>, which prefers the installer's
+    /// SPACELESS copy under %ProgramData%\StepWind\bin — several MCP clients (Cursor included)
+    /// spawn the command via cmd.exe without quoting, so a "Program Files" path breaks at the
+    /// space. Falls back to the exe beside the app (dev tree / portable).
     /// </summary>
-    public static string McpServerPath => Path.Combine(
-        Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory, "StepWind.Mcp.exe");
+    public static string McpServerPath => McpInstaller.ResolveServerExe(Path.Combine(
+        Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory, "StepWind.Mcp.exe"));
 
     /// <summary>
     /// The exact JSON block to paste into an AI tool's MCP config (Cursor's mcp.json, Claude

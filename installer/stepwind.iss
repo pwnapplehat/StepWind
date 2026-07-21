@@ -52,6 +52,12 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; The whole self-contained publish output (service + GUI + CLI + MCP server + runtime).
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+; SPACELESS copy of the MCP server. Several MCP clients (Cursor included -- verified from its
+; logs) spawn the stdio command through cmd.exe WITHOUT quoting, so a "C:\Program Files\..."
+; command executes 'C:\Program' and dies. {commonappdata}\StepWind\bin has no space in it and
+; inherits Users read+execute (only the store\ subdir is ACL-hardened), so every user's AI
+; tool can run it. The app writes THIS path into AI tools' MCP configs.
+Source: "{#DistDir}\StepWind.Mcp.exe"; DestDir: "{commonappdata}\StepWind\bin"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\StepWind.exe"
@@ -94,5 +100,7 @@ Filename: "{app}\StepWind.exe"; Description: "{cm:LaunchProgram,{#AppName}}"; Fl
 Filename: "{app}\StepWind.Service.exe"; Parameters: "uninstall-service"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveStepWindSvc"
 
 [UninstallDelete]
-; Leave the user's version history (%ProgramData%\StepWind) intact on uninstall.
+; Leave the user's version history (%ProgramData%\StepWind) intact on uninstall, but remove
+; the MCP server copy (a dead exe path in AI tools' configs is useless without the service).
 Type: filesandordirs; Name: "{app}\logs"
+Type: filesandordirs; Name: "{commonappdata}\StepWind\bin"
