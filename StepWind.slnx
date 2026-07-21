@@ -3,6 +3,7 @@
     <Project Path="src/StepWind.App/StepWind.App.csproj" />
     <Project Path="src/StepWind.Cli/StepWind.Cli.csproj" />
     <Project Path="src/StepWind.Core/StepWind.Core.csproj" />
+    <Project Path="src/StepWind.Mcp/StepWind.Mcp.csproj" />
     <Project Path="src/StepWind.Service/StepWind.Service.csproj" />
   </Folder>
   <Folder Name="/tests/">

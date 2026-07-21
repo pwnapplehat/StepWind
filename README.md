@@ -44,6 +44,23 @@ deduplicated, compressed chunks (the same technique restic/borg use), so scrolli
 back to any earlier version — even after it was overwritten *and* deleted — is instant, and
 a lightly-edited 2 GB file doesn't cost 2 GB per save.
 
+## A safety net for AI coding agents too
+
+AI tools edit files fast — and sometimes wrong. StepWind ships an **MCP server** that gives
+agents like Cursor and Claude a time machine over your protected folders: checkpoint a file
+before a risky change, see a unified diff of exactly what the agent changed since, and
+restore if it went badly. **Read-only + additive by design** — an agent can look, diff,
+checkpoint, and restore (restores never overwrite), but it can never delete history or touch
+settings.
+
+The **AI agents** tab detects the tools installed on your PC — Cursor, Claude Desktop,
+Claude Code, Antigravity, Windsurf, VS Code (Copilot), Cline, Gemini CLI, Codex CLI, Copilot
+CLI, LM Studio, Kiro — and connects any of them with **one click**. StepWind merges its entry
+into the tool's own MCP config the production-grade way: strict-parse-or-refuse (a config
+with comments is never rewritten and silently stripped), a timestamped backup before every
+change, atomic writes, and post-write verification that auto-restores the backup if anything
+looks wrong. Disconnecting removes exactly our entry and nothing else.
+
 ## Built right from day one
 
 - **Content-defined chunking + dedup** so history is cheap even for huge files, and identical
@@ -98,25 +115,27 @@ press-scale and hover-lift, dialogs scale in, and the "protection active" dot ha
 heartbeat — all opacity/transform only (render-thread composited), so it's fluid without
 taxing the machine.
 
-| File versions (folder browser) | Protected folders | Settings |
-|---|---|---|
-| <img src="docs/screenshots/files.png" width="270"/> | <img src="docs/screenshots/folders.png" width="270"/> | <img src="docs/screenshots/settings.png" width="270"/> |
+| File versions (folder browser) | AI agents | Protected folders | Settings |
+|---|---|---|---|
+| <img src="docs/screenshots/files.png" width="205"/> | <img src="docs/screenshots/ai.png" width="205"/> | <img src="docs/screenshots/folders.png" width="205"/> | <img src="docs/screenshots/settings.png" width="205"/> |
 
 ## Architecture
 
 ```
 src/StepWind.Core/     engine: FastCDC chunker, content-addressed store (+AES-GCM),
                        retention/GC, USN journal reader, operation reconstruction &
-                       reversal, ETW attribution, flight recorder, watch engine, IPC
+                       reversal, ETW attribution, flight recorder, watch engine, IPC,
+                       unified-diff engine, MCP client auto-configurator
 src/StepWind.Service/  elevated Windows service: hosts the engine + named-pipe API
 src/StepWind.App/      unelevated WPF tray app: timeline + version history + undo/restore
+src/StepWind.Mcp/      MCP server for AI agents (stdio): checkpoint / diff / restore
 src/StepWind.Cli/      diagnostics + real-hardware E2E harness
 tests/                 deterministic Core tests
 ```
 
 ## Verified
 
-- **84 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+- **164 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
   integrity, encryption round-trip & tamper rejection, DPAPI key stability, live encryption
   toggling (mixed-store reads, background re-encode convergence in both directions,
   interrupted-migration recovery, storage byte tracking, the IPC toggle end-to-end), USN
@@ -126,8 +145,12 @@ tests/                 deterministic Core tests
   reconciliation (baseline + catch-up + idempotency), GC-vs-capture interleaving integrity,
   reversal safety, retention tiers + GC (and configurable retention with clamping), folder
   removal (captures stop, nothing reseeds, purge all/unprotected/folder/file), exclusions
-  (incl. cloud placeholders), watch capture, and the full IPC capture→history→restore
-  round-trip.
+  (incl. cloud placeholders), watch capture, the full IPC capture→history→restore round-trip,
+  the unified-diff engine (fuzzed against a reference LCS; hunk-header correctness; large
+  compound edits), the AI/MCP surface (checkpoint→edit→diff→restore agent workflow, binary/
+  oversize honesty, selector errors), and the MCP client auto-configurator (merge preserves
+  every existing key, JSONC/broken files refused untouched, idempotent installs, TOML block
+  surgery, backups, BOM preservation).
 - **Real-hardware E2E** (elevated): a scripted create/rename/move/delete is reconstructed
   from the live journal, the move is reversed (folder back in one click), and a version is
   restored byte-exact after overwrite+delete — all through the production classes. The
@@ -157,7 +180,7 @@ Windows 10 (1809+) or Windows 11, an NTFS drive.
 ```powershell
 dotnet build StepWind.slnx      # build everything
 dotnet test                     # Core test suite
-./build/publish.ps1             # self-contained service + GUI + CLI → dist/
+./build/publish.ps1             # self-contained service + GUI + CLI + MCP server → dist/
 iscc installer\stepwind.iss     # build the setup .exe → installer/Output/
 ```
 

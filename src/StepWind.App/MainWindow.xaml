@@ -126,6 +126,16 @@
             </StackPanel>
           </RadioButton>
 
+          <TextBlock Text="Integrations" Style="{StaticResource SW.SectionLabel}" Margin="24,18,0,6"/>
+          <RadioButton x:Name="NavAgents" Style="{StaticResource SW.NavItem}"
+                       Checked="OnNav" Tag="ai" GroupName="Nav"
+                       AutomationProperties.Name="AI agents">
+            <StackPanel Orientation="Horizontal">
+              <ui:SymbolIcon Symbol="Bot24" FontSize="17"/>
+              <TextBlock Text="AI agents" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+          </RadioButton>
+
           <TextBlock Text="App" Style="{StaticResource SW.SectionLabel}" Margin="24,18,0,6"/>
           <RadioButton x:Name="NavSettings" Style="{StaticResource SW.NavItem}"
                        Checked="OnNav" Tag="settings" GroupName="Nav"
@@ -153,6 +163,7 @@
         <views:TimelineView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=timeline}"/>
         <views:FilesView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=files}"/>
         <views:FoldersView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=folders}"/>
+        <views:AiAgentsView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=ai}"/>
         <views:SettingsView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=settings}"/>
       </Grid>
     </Grid>

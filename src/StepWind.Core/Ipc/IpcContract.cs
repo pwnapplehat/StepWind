@@ -31,6 +31,12 @@ public enum IpcCommand
     GetRecentFiles = 9,   // distinct files with saved history, most-recently-changed first
     PurgeHistory = 10,    // delete stored versions now: "*" | "unprotected" | folder-or-file prefix
     BrowseVersions = 11,  // folder-tree browse (Arg1 = prefix) or recursive search (Arg2 = query)
+
+    // ── AI/MCP surface: read-only + additive only. No command below this line may delete
+    // history or change settings — an AI agent gets the time machine, not the shredder. ──
+    GetVersionContent = 12, // read one version's (or the live file's) text — Arg1 = selector
+    DiffVersions = 13,       // unified diff between two selectors — Arg1 = old, Arg2 = new
+    CaptureNow = 14,         // force an immediate checkpoint of one file — Arg1 = path/selector
 }
 
 public sealed record IpcRequest
@@ -105,4 +111,36 @@ public sealed record BrowseEntry
 
     /// <summary>For folders: how many distinct files with history live beneath it.</summary>
     public int FileCount { get; init; }
+}
+
+/// <summary>
+/// The text content of one version — or the live on-disk file — for the AI/MCP read and diff
+/// tools. <see cref="Content"/> is null when the file is binary or larger than the size cap;
+/// <see cref="Size"/> and <see cref="IsBinary"/>/<see cref="Truncated"/> are still reported so
+/// a caller always learns something honest even when the bytes aren't included.
+/// </summary>
+public sealed record ContentResult
+{
+    public required string RelativePath { get; init; }
+
+    /// <summary>Human-readable provenance, e.g. "Docs/x.txt @ 2026-07-21 09:14 UTC (checkpoint)".</summary>
+    public required string Label { get; init; }
+    public required DateTime WhenUtc { get; init; }
+    public required long Size { get; init; }
+    public required bool IsBinary { get; init; }
+    public required bool Truncated { get; init; }
+    public string? Content { get; init; }
+}
+
+/// <summary>Unified-diff result between two <see cref="ContentResult"/>-style selectors.</summary>
+public sealed record DiffResult
+{
+    public required string OldLabel { get; init; }
+    public required string NewLabel { get; init; }
+    public required long OldSize { get; init; }
+    public required long NewSize { get; init; }
+    public required bool Binary { get; init; }
+
+    /// <summary>The unified diff text, or an explanation when a text diff isn't possible.</summary>
+    public required string Diff { get; init; }
 }

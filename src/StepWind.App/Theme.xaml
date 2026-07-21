@@ -84,6 +84,9 @@
 
   <SolidColorBrush x:Key="SW.Danger" Color="#FB7185"/>
   <SolidColorBrush x:Key="SW.Ok" Color="#34D399"/>
+  <SolidColorBrush x:Key="SW.OkFaint" Color="#2634D399"/>
+  <SolidColorBrush x:Key="SW.Warn" Color="#FBBF24"/>
+  <SolidColorBrush x:Key="SW.WarnFaint" Color="#26FBBF24"/>
 
   <!-- ═══════════════════════ Typography ═══════════════════════ -->
 

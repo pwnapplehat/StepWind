@@ -4,8 +4,31 @@ All notable changes to StepWind are documented here.
 
 ## 1.0.0 — 2026-07-20
 
-Initial release — an undo button for your whole PC.
+Initial release — an undo button for your whole PC (and a safety net for AI coding agents).
 
+- **A safety net for AI coding agents — MCP server + AI agents tab:** StepWind ships an MCP
+  server (`StepWind.Mcp.exe`) that gives agents like Cursor and Claude a time machine, not a
+  shredder. Ten tools: status, timeline, protected folders, browse, file history, read
+  version, unified diff, checkpoint, restore, undo operation. Read-only + additive by
+  design: an agent can checkpoint a file before a risky edit, diff exactly what it changed
+  (`latest:` vs `current:`), and restore — it can never delete history or change settings.
+  Restores never overwrite the live file. Diffs come from a linear-space Hirschberg LCS
+  engine (an always-on service must not allocate a 1.6 GB DP table because two 20,000-line
+  files showed up). Runs on demand over stdio; nothing listens in the background.
+  The dedicated **AI agents** tab detects the AI tools installed on your PC — Cursor, Claude
+  Desktop, Claude Code, Antigravity, Windsurf, VS Code (Copilot), Cline, Gemini CLI, Codex
+  CLI, Copilot CLI, LM Studio, Kiro — and connects StepWind to any of them with one click.
+  No hand-editing JSON: StepWind merges its entry into the tool's own MCP config (each
+  tool's real path and schema researched individually, including Claude Desktop's
+  MSIX-virtualized config location and Antigravity's post-2.0 migration marker; Codex CLI's
+  TOML gets line-conservative surgery that leaves every other line untouched). Safety rules
+  for touching someone else's config: strict-parse-or-refuse (a JSONC file with comments is
+  never rewritten — rewriting would strip the comments), timestamped backup before every
+  change (Open backups folder in the app), atomic temp+rename writes, and a post-write
+  re-parse that restores the backup automatically if verification fails. Disconnect (also
+  one click) removes exactly our entry and nothing else. Repair shows up automatically when
+  a connected tool points at a stale StepWind location. Manual copy-paste config stays
+  available for MCP clients we don't auto-detect.
 - **Flight recorder (all drives):** tails the NTFS USN journal, reconstructs a plain-English
   operation timeline (rename vs move via parent-FRN delta), attributes each operation to its
   process via ETW, and reverses a move/rename in one click (no stored content needed).

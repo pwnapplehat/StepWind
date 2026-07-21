@@ -1,4 +1,4 @@
-# StepWind publish — self-contained service + GUI + CLI into dist\<runtime>.
+# StepWind publish — self-contained service + GUI + CLI + MCP server into dist\<runtime>.
 param([string]$Runtime = "win-x64", [string]$Configuration = "Release")
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -11,7 +11,11 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $projects = @(
     @{ Path = "src\StepWind.App\StepWind.App.csproj";     Single = $true  },
     @{ Path = "src\StepWind.Service\StepWind.Service.csproj"; Single = $false },
-    @{ Path = "src\StepWind.Cli\StepWind.Cli.csproj";     Single = $true  }
+    @{ Path = "src\StepWind.Cli\StepWind.Cli.csproj";     Single = $true  },
+    # A single self-contained exe with no loose DLLs alongside it: AI clients (Cursor, Claude
+    # Desktop) launch this directly via a "command" path in their MCP config, so it needs to
+    # be a complete, standalone unit at that one path.
+    @{ Path = "src\StepWind.Mcp\StepWind.Mcp.csproj";      Single = $true  }
 )
 foreach ($p in $projects) {
     dotnet publish (Join-Path $root $p.Path) -c $Configuration -r $Runtime --self-contained true `

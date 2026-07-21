@@ -1,10 +1,12 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Windows.Data;
 using System.Windows.Threading;
 using StepWind.Core.Engine;
+using StepWind.Core.Integration;
 using StepWind.Core.Ipc;
 
 namespace StepWind.App.ViewModels;
@@ -55,6 +57,37 @@ public sealed class Crumb
     public required string Label { get; init; }
     public required string Path { get; init; }
     public required bool IsLast { get; init; }
+}
+
+/// <summary>
+/// One AI tool card on the AI agents tab. Immutable — the collection is rebuilt after every
+/// install/remove/refresh, matching how the other list views work.
+/// </summary>
+public sealed class AgentRow
+{
+    public required McpClientTarget Target { get; init; }
+
+    public string Name => Target.DisplayName;
+    public string ConfigPath => Target.ConfigPath;
+
+    /// <summary>The tool appears to be installed on this machine.</summary>
+    public bool Detected => Target.Installed;
+
+    /// <summary>Our stepwind entry is present in its config.</summary>
+    public bool Connected => Target.Configured;
+
+    /// <summary>Connected, but pointing at a stale exe path (app moved/reinstalled elsewhere).</summary>
+    public required bool NeedsRepair { get; init; }
+
+    public required string StatusText { get; init; }
+
+    // The XAML template picks button visibility off these three:
+    public bool ShowConnect => Detected && !Connected;
+    public bool ShowRepair => Detected && Connected && NeedsRepair;
+    public bool ShowDisconnect => Connected;
+
+    /// <summary>Sort weight: actionable first, then connected, then undetected (dimmed).</summary>
+    public int SortOrder => Detected ? (Connected ? (NeedsRepair ? 0 : 1) : 0) : 2;
 }
 
 /// <summary>
@@ -443,6 +476,107 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public static string AppVersion =>
         typeof(MainViewModel).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "1.0.0";
+
+    /// <summary>
+    /// The MCP server exe path, resolved from THIS process's own install location rather than
+    /// a hardcoded "Program Files" path — correct regardless of where the user chose to install
+    /// (Inno Setup lets that be customized), since StepWind.Mcp.exe always ships beside StepWind.exe.
+    /// </summary>
+    public static string McpServerPath => Path.Combine(
+        Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory, "StepWind.Mcp.exe");
+
+    /// <summary>
+    /// The exact JSON block to paste into an AI tool's MCP config (Cursor's mcp.json, Claude
+    /// Desktop's config, etc.) — the standard "mcpServers" shape nearly every MCP client uses.
+    /// </summary>
+    public static string McpConfigSnippet
+    {
+        get
+        {
+            string jsonPath = JsonSerializer.Serialize(McpServerPath); // correct \-escaping, pre-quoted
+            return "{\n  \"mcpServers\": {\n    \"stepwind\": {\n      \"command\": " + jsonPath + "\n    }\n  }\n}";
+        }
+    }
+
+    // ------------------------------- AI agents tab -------------------------------
+
+    public ObservableCollection<AgentRow> Agents { get; } = [];
+
+    public int AgentsDetectedCount
+    {
+        get => _agentsDetectedCount;
+        private set { _agentsDetectedCount = value; OnChanged(); OnChanged(nameof(AgentsSummary)); }
+    }
+
+    public int AgentsConnectedCount
+    {
+        get => _agentsConnectedCount;
+        private set { _agentsConnectedCount = value; OnChanged(); OnChanged(nameof(AgentsSummary)); }
+    }
+
+    public string AgentsSummary => AgentsDetectedCount == 0
+        ? "No supported AI tools were found on this PC. Install one (Cursor, Claude, VS Code…) or use the manual setup below."
+        : $"{AgentsDetectedCount} AI tool{(AgentsDetectedCount == 1 ? "" : "s")} found on this PC · {AgentsConnectedCount} connected";
+
+    private int _agentsDetectedCount;
+    private int _agentsConnectedCount;
+
+    /// <summary>
+    /// Re-probes every supported AI tool (installed? already configured? pointing at the right
+    /// exe?). Pure disk probing — runs off the UI thread, then swaps the collection in one pass.
+    /// </summary>
+    public async Task RefreshAgentsAsync()
+    {
+        List<AgentRow> rows = await Task.Run(() =>
+        {
+            string exe = McpServerPath;
+            var built = new List<AgentRow>();
+            foreach (McpClientTarget t in McpInstaller.DetectAll())
+            {
+                bool stale = t.Configured && t.ConfiguredCommand is { Length: > 0 } cmd &&
+                             !string.Equals(cmd, exe, StringComparison.OrdinalIgnoreCase);
+                string status = !t.Installed
+                    ? "Not found on this PC"
+                    : !t.Configured
+                        ? "Ready to connect"
+                        : stale
+                            ? "Connected, but pointing at an old StepWind location"
+                            : "Connected";
+                built.Add(new AgentRow { Target = t, NeedsRepair = stale, StatusText = status });
+            }
+            return built.OrderBy(r => r.SortOrder).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        });
+
+        Agents.Clear();
+        foreach (AgentRow r in rows)
+        {
+            Agents.Add(r);
+        }
+        AgentsDetectedCount = rows.Count(r => r.Detected);
+        AgentsConnectedCount = rows.Count(r => r.Connected);
+    }
+
+    /// <summary>One-click connect (also used for repair — install always writes the current path).</summary>
+    public async Task<McpInstallResult> ConnectAgentAsync(AgentRow row)
+    {
+        string exe = McpServerPath;
+        if (!File.Exists(exe))
+        {
+            return new McpInstallResult(false,
+                $"StepWind.Mcp.exe was not found next to the app ({exe}). Repair the StepWind installation first — nothing was changed.");
+        }
+
+        McpInstallResult result = await Task.Run(() => McpInstaller.Install(row.Target, exe));
+        await RefreshAgentsAsync();
+        return result;
+    }
+
+    public async Task<McpInstallResult> DisconnectAgentAsync(AgentRow row)
+    {
+        McpInstallResult result = await Task.Run(() => McpInstaller.Remove(row.Target));
+        await RefreshAgentsAsync();
+        return result;
+    }
 
     private bool _seededDefaults;
 

@@ -1,5 +1,7 @@
 using System.Runtime.Versioning;
+using System.Text;
 using System.Text.Json;
+using StepWind.Core.Diffing;
 using StepWind.Core.Ipc;
 using StepWind.Core.Journal;
 using StepWind.Core.Storage;
@@ -139,6 +141,9 @@ public sealed class StepWindHost : IDisposable
                 IpcCommand.SetSettings => ApplySettings(request.Arg1 ?? ""),
                 IpcCommand.PurgeHistory => PurgeHistory(request.Arg1 ?? ""),
                 IpcCommand.BrowseVersions => Ok(BrowseVersions(request.Arg1 ?? "", request.Arg2, request.Limit)),
+                IpcCommand.GetVersionContent => GetVersionContent(request.Arg1 ?? ""),
+                IpcCommand.DiffVersions => DiffVersionsCommand(request.Arg1 ?? "", request.Arg2 ?? ""),
+                IpcCommand.CaptureNow => CaptureNowCommand(request.Arg1 ?? ""),
                 _ => IpcResponse.Fail("unsupported command"),
             };
         }
@@ -477,6 +482,222 @@ public sealed class StepWindHost : IDisposable
     {
         int slash = relativePath.LastIndexOf('/');
         return slash < 0 ? relativePath : relativePath[(slash + 1)..];
+    }
+
+    // ── AI/MCP read + diff + checkpoint surface ─────────────────────────────────────────
+    // Deliberately read-only + additive: nothing here can delete history or change settings.
+    // An AI agent editing files in a protected folder gets the time machine (see what
+    // changed, restore, checkpoint before a risky edit) but never the shredder.
+
+    /// <summary>
+    /// Cap on the bytes read back for a single GetVersionContent/DiffVersions side. Generous
+    /// for source/config/doc files (the realistic AI-agent use case); large or binary files
+    /// report their size honestly instead of paying to read/return megabytes of content the
+    /// caller almost certainly can't use anyway. Matches UnifiedDiff's own line-count cap in
+    /// spirit — keep any single MCP call fast, since the pipe serves one connection at a time.
+    /// </summary>
+    private const long MaxContentBytes = 4 * 1024 * 1024;
+
+    private sealed class ResolvedContent
+    {
+        public string RelativePath = "";
+        public string Label = "";
+        public DateTime WhenUtc;
+        public long Size;
+        public bool TooLarge;
+        public bool IsBinary;
+        public byte[]? Bytes;
+    }
+
+    /// <summary>
+    /// Resolves a content/diff selector. Three forms:
+    ///   "relpath|ticks"    an exact captured version (the VersionId shape used elsewhere)
+    ///   "latest:relpath"   the most recently captured version of that file
+    ///   "current:relpath"  the live bytes on disk right now — lets a caller ask "what have I
+    ///                       changed since the last checkpoint" without needing a VersionId
+    /// Throws (caught by Handle's outer try/catch → a clean IpcResponse.Fail) on anything that
+    /// doesn't resolve, so every failure mode reaches the caller as one readable error string.
+    /// </summary>
+    private ResolvedContent ResolveSelector(string selector)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+        {
+            throw new ArgumentException("empty selector");
+        }
+
+        if (selector.StartsWith("current:", StringComparison.OrdinalIgnoreCase))
+        {
+            string rel = NormalizeRel(selector[8..]);
+            string absolute = ResolveOriginalPath(rel);
+            if (!File.Exists(absolute))
+            {
+                throw new FileNotFoundException($"no current file at '{rel}' (looked for {absolute})");
+            }
+
+            var info = new FileInfo(absolute);
+            var current = new ResolvedContent
+            {
+                RelativePath = rel,
+                Label = $"{rel} (current on disk, {info.LastWriteTimeUtc:yyyy-MM-dd HH:mm:ss} UTC)",
+                WhenUtc = info.LastWriteTimeUtc,
+                Size = info.Length,
+            };
+
+            if (info.Length > MaxContentBytes)
+            {
+                current.TooLarge = true;
+                return current;
+            }
+
+            // Shared read: never blocks whatever app currently has the file open.
+            byte[] liveBytes = ReadAllBytesShared(absolute);
+            current.Bytes = liveBytes;
+            current.IsBinary = UnifiedDiff.LooksBinary(liveBytes);
+            return current;
+        }
+
+        FileVersion version;
+        if (selector.StartsWith("latest:", StringComparison.OrdinalIgnoreCase))
+        {
+            string rel = NormalizeRel(selector[7..]);
+            version = _store.Log.LatestFor(rel) ?? throw new FileNotFoundException($"no saved history for '{rel}'");
+        }
+        else
+        {
+            int sep = selector.LastIndexOf('|');
+            if (sep <= 0 || !long.TryParse(selector[(sep + 1)..], out long ticks))
+            {
+                throw new ArgumentException(
+                    $"unrecognized selector '{selector}' — expected 'relpath|ticks', 'latest:relpath', or 'current:relpath'");
+            }
+
+            string rel = selector[..sep];
+            version = _store.Log.History(rel).FirstOrDefault(v => v.CapturedUtc.Ticks == ticks)
+                ?? throw new FileNotFoundException($"version not found: {selector}");
+        }
+
+        var resolved = new ResolvedContent
+        {
+            RelativePath = version.RelativePath,
+            Label = $"{version.RelativePath} @ {version.CapturedUtc:yyyy-MM-dd HH:mm:ss} UTC ({version.Reason})",
+            WhenUtc = version.CapturedUtc,
+            Size = version.Size,
+        };
+
+        if (version.Size > MaxContentBytes)
+        {
+            resolved.TooLarge = true;
+            return resolved;
+        }
+
+        using var ms = new MemoryStream();
+        _store.WriteContent(version, ms); // re-hashes + verifies every chunk as it reads
+        byte[] contentBytes = ms.ToArray();
+        resolved.Bytes = contentBytes;
+        resolved.IsBinary = UnifiedDiff.LooksBinary(contentBytes);
+        return resolved;
+    }
+
+    private static byte[] ReadAllBytesShared(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var ms = new MemoryStream();
+        fs.CopyTo(ms);
+        return ms.ToArray();
+    }
+
+    private static string NormalizeRel(string rel) => rel.Replace('\\', '/').TrimStart('/');
+
+    private IpcResponse GetVersionContent(string selector)
+    {
+        ResolvedContent r = ResolveSelector(selector);
+        var result = new ContentResult
+        {
+            RelativePath = r.RelativePath,
+            Label = r.Label,
+            WhenUtc = r.WhenUtc,
+            Size = r.Size,
+            IsBinary = r.IsBinary,
+            Truncated = r.TooLarge,
+            Content = r is { TooLarge: false, IsBinary: false, Bytes: not null } ? DecodeText(r.Bytes) : null,
+        };
+        return Ok(result);
+    }
+
+    private IpcResponse DiffVersionsCommand(string oldSelector, string newSelector)
+    {
+        ResolvedContent oldSide = ResolveSelector(oldSelector);
+        ResolvedContent newSide = ResolveSelector(newSelector);
+
+        string diffText;
+        bool binary = oldSide.IsBinary || newSide.IsBinary;
+        if (binary)
+        {
+            diffText = oldSide.Size == newSide.Size
+                ? $"(binary file, size unchanged: {oldSide.Size:N0} bytes — content may still differ)"
+                : $"(binary file: {oldSide.Size:N0} -> {newSide.Size:N0} bytes)";
+        }
+        else if (oldSide.TooLarge || newSide.TooLarge)
+        {
+            diffText = $"(file too large to diff: {oldSide.Size:N0} vs {newSide.Size:N0} bytes, cap is {MaxContentBytes:N0})";
+        }
+        else
+        {
+            string oldText = DecodeText(oldSide.Bytes!);
+            string newText = DecodeText(newSide.Bytes!);
+            diffText = UnifiedDiff.Diff(oldText, newText, oldSide.Label, newSide.Label);
+        }
+
+        return Ok(new DiffResult
+        {
+            OldLabel = oldSide.Label,
+            NewLabel = newSide.Label,
+            OldSize = oldSide.Size,
+            NewSize = newSide.Size,
+            Binary = binary,
+            Diff = diffText,
+        });
+    }
+
+    private static string DecodeText(byte[] bytes) => new UTF8Encoding(false).GetString(bytes);
+
+    /// <summary>
+    /// Forces an immediate capture of one file — a "checkpoint" — instead of waiting for the
+    /// watcher's debounce window. Meant for an AI agent about to make a risky edit: checkpoint
+    /// first, edit, then DiffVersions("latest:path","current:path") to see exactly what changed
+    /// and RestoreVersion to undo if it went wrong. Accepts an absolute path (must resolve
+    /// under a watched root) or an already-relative "Folder/name.ext" path.
+    /// </summary>
+    private IpcResponse CaptureNowCommand(string pathOrRelative)
+    {
+        string relative;
+        string absolute;
+        if (pathOrRelative.Contains(':') || pathOrRelative.StartsWith('\\'))
+        {
+            absolute = pathOrRelative;
+            relative = _watch.RelativeToRoot(absolute)
+                ?? throw new ArgumentException($"'{absolute}' is not inside any protected folder");
+        }
+        else
+        {
+            relative = NormalizeRel(pathOrRelative);
+            absolute = ResolveOriginalPath(relative);
+        }
+
+        if (!File.Exists(absolute))
+        {
+            return IpcResponse.Fail($"file not found: {absolute}");
+        }
+
+        FileVersion version = _store.Capture(absolute, relative, reason: "checkpoint");
+        return Ok(new VersionEntry
+        {
+            RelativePath = version.RelativePath,
+            CapturedUtc = version.CapturedUtc,
+            Size = version.Size,
+            Reason = version.Reason,
+            VersionId = $"{version.RelativePath}|{version.CapturedUtc.Ticks}",
+        });
     }
 
     /// <summary>Distinct protected files with history, most-recently-changed first (quick list).</summary>
