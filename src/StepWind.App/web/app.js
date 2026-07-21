@@ -84,6 +84,44 @@ function shortPath(p) {
 
 function stagger(el, i) { el.style.animationDelay = Math.min(i * 16, 360) + "ms"; }
 
+/* ═══════════════ Theme (System / Light / Dark) ═══════════════
+   The chosen MODE is a pure presentation preference, persisted in the WebView's own
+   localStorage (survives restarts via the app's dedicated user-data folder) — no service
+   round-trip. "System" reads the OS via matchMedia (WebView2's default color scheme follows
+   Windows) and live-updates when the OS theme flips; Light/Dark force it regardless. The
+   RESOLVED theme (dark|light) is written to <html data-theme> — CSS keys off that alone —
+   and pushed to the host so the native window chrome (resize border + pre-load color) matches. */
+const THEME_KEY = "stepwind.theme";
+const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+
+function themeMode() {
+  const m = localStorage.getItem(THEME_KEY);
+  return m === "light" || m === "dark" ? m : "system";
+}
+
+function resolvedTheme(mode = themeMode()) {
+  if (mode === "system") return systemDark.matches ? "dark" : "light";
+  return mode;
+}
+
+function applyTheme(mode = themeMode()) {
+  const resolved = resolvedTheme(mode);
+  document.documentElement.dataset.theme = resolved;
+  // Tell the host so the chromeless window's frame + backdrop track the theme (no dark strip
+  // around a light UI). Fire-and-forget; harmless if the bridge isn't ready yet.
+  try { call("chromeTheme", { theme: resolved }); } catch { }
+  return resolved;
+}
+
+function setThemeMode(mode) {
+  if (mode === "system") localStorage.removeItem(THEME_KEY);
+  else localStorage.setItem(THEME_KEY, mode);
+  applyTheme(mode);
+}
+
+// Live-follow the OS while in System mode.
+systemDark.addEventListener("change", () => { if (themeMode() === "system") applyTheme("system"); });
+
 /* ═══════════════ Toasts ═══════════════ */
 
 function toast(kind, title, body, ms = 4200) {
@@ -233,7 +271,7 @@ function opInProtectedFolder(op) {
   return false;
 }
 
-function renderTimeline() {
+function renderTimeline(animate = false) {
   const host = $("#view-timeline");
   let ops = tlFilter === "All" ? tlOps : tlOps.filter((o) => o.Kind === tlFilter);
   if (tlProtectedOnly) ops = ops.filter(opInProtectedFolder);
@@ -263,7 +301,7 @@ function renderTimeline() {
         <button class="chip ${tlProtectedOnly ? "active" : ""}" data-scope="protected">Protected only</button>
       </div>
     </div>
-    <div class="tl-scroll">`;
+    <div class="tl-scroll${animate ? " enter" : ""}">`;
 
   if (!ops.length) {
     const why = lastStatus && lastStatus.FlightRecorder === false
@@ -273,6 +311,8 @@ function renderTimeline() {
         : "Start the StepWind service to begin recording.";
     html += `<div class="empty"><div><div class="empty-title">Nothing here yet</div>${esc(why)}</div></div>`;
   } else {
+    // Only tag the list for the staggered entrance on an intentional (re)render — never on
+    // the 3s background refresh, which would re-fade the whole list every few seconds.
     let lastDay = null, i = 0;
     for (const op of ops) {
       const day = dayLabel(op.TimestampUtc);
@@ -302,16 +342,16 @@ function renderTimeline() {
   const newScroller = $(".tl-scroll", host);
   if (newScroller && keepScroll) newScroller.scrollTop = keepScroll;
 
-  $$(".tl-row", host).forEach((r, idx) => stagger(r, idx));
-  $$(".chip[data-k]", host).forEach((c) => (c.onclick = () => { tlFilter = c.dataset.k; renderTimeline(); }));
+  if (animate) $$(".enter > .tl-row", host).forEach((r, idx) => stagger(r, idx));
+  $$(".chip[data-k]", host).forEach((c) => (c.onclick = () => { tlFilter = c.dataset.k; renderTimeline(true); }));
   $$(".chip[data-scope]", host).forEach((c) => (c.onclick = () => {
     const protectedOnly = c.dataset.scope === "protected";
     if (protectedOnly === tlProtectedOnly) return;
     tlProtectedOnly = protectedOnly;
-    renderTimeline();
+    renderTimeline(true);
     call("patch", { patch: { TimelineProtectedOnly: protectedOnly } }).catch(() => { });
   }));
-  $("#tl-refresh", host).onclick = () => loadTimeline(false);
+  $("#tl-refresh", host).onclick = () => loadTimeline(false, true);
   $$(".tl-undo", host).forEach((b) => (b.onclick = async () => {
     b.disabled = true;
     try {
@@ -325,7 +365,7 @@ function renderTimeline() {
   }));
 }
 
-async function loadTimeline(silent) {
+async function loadTimeline(silent, animate = false) {
   let json = "[]";
   try {
     const data = (await call("timeline", { limit: 250 })) || [];
@@ -337,7 +377,7 @@ async function loadTimeline(silent) {
     tlOps = [];
   }
   tlFingerprint = json;
-  renderTimeline();
+  renderTimeline(animate);
 }
 
 /* ═══════════════ Files view (browser + history + diff) ═══════════════ */
@@ -400,20 +440,21 @@ function renderFilesScaffold() {
     debounce = setTimeout(() => {
       filesState.query = search.value.trim();
       filesState.browseFp = "";
-      refreshBrowse(false);
+      refreshBrowse(false, true);
     }, 220);
   };
   renderHistoryPane();
 }
 
-function renderBrowseList() {
+function renderBrowseList(animate = false) {
   const list = $("#f-list");
   const crumbs = $("#f-crumbs");
   if (!list) return;
+  list.classList.toggle("enter", animate);
   crumbs.innerHTML = filesCrumbsHtml();
   $$(".fc", crumbs).forEach((c) => {
     if (!c.classList.contains("here")) {
-      c.onclick = () => { filesState.path = c.dataset.p; filesState.query = ""; $("#f-search").value = ""; filesState.browseFp = ""; refreshBrowse(false); };
+      c.onclick = () => { filesState.path = c.dataset.p; filesState.query = ""; $("#f-search").value = ""; filesState.browseFp = ""; refreshBrowse(false, true); };
     }
   });
 
@@ -438,13 +479,13 @@ function renderBrowseList() {
       ${e0.IsFolder ? '<div class="f-chev"><svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></div>' : ""}
     </div>`).join("");
   $$(".f-row", list).forEach((r, i) => {
-    stagger(r, i);
+    if (animate) stagger(r, i);
     r.onclick = () => {
       const entry = filesState.entries[+r.dataset.i];
       if (entry.IsFolder) {
         filesState.path = entry.RelativePath; filesState.query = "";
         $("#f-search").value = ""; filesState.browseFp = "";
-        refreshBrowse(false);
+        refreshBrowse(false, true);
       } else {
         $$(".f-row", list).forEach((x) => x.classList.remove("selected"));
         r.classList.add("selected");
@@ -454,7 +495,7 @@ function renderBrowseList() {
   });
 }
 
-async function refreshBrowse(silent) {
+async function refreshBrowse(silent, animate = false) {
   try {
     const data = (await call("browse", { path: filesState.path, query: filesState.query || null })) || [];
     const fp = filesState.path + "\u0001" + filesState.query + "\u0001" + JSON.stringify(data);
@@ -465,10 +506,10 @@ async function refreshBrowse(silent) {
     if (silent) return;
     filesState.entries = [];
   }
-  renderBrowseList();
+  renderBrowseList(animate);
 }
 
-function renderHistoryPane() {
+function renderHistoryPane(animate = false) {
   const pane = $("#hist-pane");
   if (!pane) return;
   const st = filesState;
@@ -493,7 +534,7 @@ function renderHistoryPane() {
         </button>
       </div>
     </div>
-    <div class="hist-list" id="h-list">
+    <div class="hist-list${animate ? " enter" : ""}" id="h-list">
       ${st.history.length ? st.history.map((v, i) => `
         <div class="v-row ${st.selectedVersion === v.VersionId ? "selected" : ""}" data-i="${i}">
           <span class="v-when">${fmtWhen(v.CapturedUtc)}</span>
@@ -509,7 +550,7 @@ function renderHistoryPane() {
 
   $("#h-delete", pane).onclick = deleteFileHistory;
   $$(".v-row", pane).forEach((r, i) => {
-    stagger(r, i);
+    if (animate) stagger(r, i);
     r.onclick = (ev) => {
       if (ev.target.closest(".v-restore")) return;
       const v = st.history[+r.dataset.i];
@@ -526,10 +567,10 @@ async function openHistoryByPath(relativeOrAbsolutePath) {
   filesState.historyPath = relativeOrAbsolutePath;
   filesState.selectedVersion = null;
   filesState.historyFp = "";
-  await refreshHistory(false);
+  await refreshHistory(false, true);
 }
 
-async function refreshHistory(silent) {
+async function refreshHistory(silent, animate = false) {
   const st = filesState;
   if (!st.historyPath) return;
   try {
@@ -543,7 +584,7 @@ async function refreshHistory(silent) {
     st.history = [];
     toast("err", "Couldn't load history", err.message);
   }
-  renderHistoryPane();
+  renderHistoryPane(animate);
 }
 
 async function restoreVersion(btn) {
@@ -621,7 +662,7 @@ async function showDiff(version) {
 
 function loadFiles() {
   renderFilesScaffold();
-  refreshBrowse(false);
+  refreshBrowse(false, true);
 }
 
 /* ═══════════════ Folders view ═══════════════ */
@@ -647,7 +688,7 @@ async function loadFolders() {
       <svg viewBox="0 0 24 24"><path d="M12 22s8-3.4 8-10V5.5L12 2 4 5.5V12c0 6.6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
       <div>A version is captured a couple of seconds after a file settles. Identical re-saves are skipped, build junk and caches are excluded automatically, and restores never overwrite your current file — the recovered version lands next to it. Removing a folder only stops new captures: already-saved versions stay restorable until retention ages them out.</div>
     </div>
-    <div class="card-grid">
+    <div class="card-grid enter">
       ${folders.map((f, i) => `
         <div class="card g-card" data-i="${i}">
           <div class="g-head">
@@ -751,7 +792,7 @@ async function loadAgents() {
         Connecting merges StepWind's MCP server into that tool's config — a backup is taken first and every change is reversible. The agent gets read + restore powers only: it can never delete history or change settings.</div>
     </div>
     <div class="scroll-y" style="flex:1;min-height:0">
-      <div class="card-grid" style="overflow:visible;scrollbar-gutter:auto">
+      <div class="card-grid enter" style="overflow:visible;scrollbar-gutter:auto">
         ${agents.map((a, i) => `
           <div class="card g-card ${a.detected ? "" : "dim"}" data-i="${i}">
             <div class="g-head">
@@ -760,7 +801,7 @@ async function loadAgents() {
               </div>
               <div style="min-width:0">
                 <div class="g-title">${esc(a.name)}</div>
-                <div class="g-sub ${a.connected && !a.needsRepair ? "ok" : ""}" ${a.needsRepair ? 'style="color:var(--warn)"' : ""}>${a.connected
+                <div class="g-sub ${a.connected && !a.needsRepair ? "ok" : ""}" ${a.needsRepair ? 'style="color:var(--warn-text)"' : ""}>${a.connected
                   ? (a.needsRepair ? "Connected, but pointing at an old StepWind location" : "Connected")
                   : a.detected ? "Ready to connect" : "Not found on this PC"}</div>
               </div>
@@ -834,6 +875,18 @@ async function loadSettings() {
     <div class="set-scroll">
      <div class="set-cols">
       <div class="set-section">
+        <div class="set-label">Appearance</div>
+        <div class="card set-card"><div class="set-row">
+          <div><div class="set-title">Theme</div>
+          <div class="set-sub">Follow Windows, or lock to light or dark. Applies instantly.</div></div>
+          <div class="seg-toggle" id="theme-seg" role="group" aria-label="Theme">
+            ${[["system", "System"], ["light", "Light"], ["dark", "Dark"]]
+              .map(([v, label]) => `<button class="seg-btn ${themeMode() === v ? "active" : ""}" data-theme-mode="${v}">${label}</button>`).join("")}
+          </div>
+        </div></div>
+      </div>
+
+      <div class="set-section">
         <div class="set-label">Updates</div>
         <div class="card set-card"><div class="set-row">
           <div><div class="set-title">Automatic silent updates</div>
@@ -894,7 +947,7 @@ async function loadSettings() {
             <button class="btn" id="dm-unprot" style="margin-left:auto;flex-shrink:0">Clean up</button>
           </div>
           <div class="set-row">
-            <div><div class="set-title" style="color:var(--danger)">Delete all history</div>
+            <div><div class="set-title" style="color:var(--danger-text)">Delete all history</div>
             <div class="set-sub">Permanently deletes every saved version of every file and frees the disk space. Your actual files are not touched.</div></div>
             <button class="btn danger" id="dm-all" style="margin-left:auto;flex-shrink:0">Delete all…</button>
           </div>
@@ -925,6 +978,11 @@ async function loadSettings() {
     </div>`;
 
   call("appInfo").then((info) => { const el = $("#ab-ver"); if (el) el.textContent = "v" + info.version; });
+
+  $$("#theme-seg .seg-btn", host).forEach((b) => (b.onclick = () => {
+    setThemeMode(b.dataset.themeMode);
+    $$("#theme-seg .seg-btn", host).forEach((x) => x.classList.toggle("active", x === b));
+  }));
 
   // Toggles: optimistic flip, push the patch, then reload from the service — on failure the
   // reload snaps the switch back to the truth (e.g. flight recorder in an unprivileged run).
@@ -1083,7 +1141,7 @@ document.addEventListener("keydown", (e) => {
 /* ═══════════════ Boot ═══════════════ */
 
 const VIEW_LOADERS = {
-  timeline: () => loadTimeline(false),
+  timeline: () => loadTimeline(false, true), // animate the reveal on navigate, not on the 3s tick
   files: loadFiles,
   folders: loadFolders,
   agents: loadAgents,
@@ -1091,6 +1149,7 @@ const VIEW_LOADERS = {
 };
 
 (async function boot() {
+  applyTheme(); // re-assert data-theme + notify the host chrome now that the bridge is ready
   await pollStatus();
   try {
     const s = await call("settings");

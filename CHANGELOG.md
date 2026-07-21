@@ -6,6 +6,16 @@ All notable changes to StepWind are documented here.
 
 Initial release — an undo button for your whole PC (and a safety net for AI coding agents).
 
+- **Full light theme (System / Light / Dark).** A soft-white light theme built to the same
+  standard as the dark one: every surface, overlay, shadow, and text accent is a theme token
+  (no hardcoded color assumes a dark background), with light-specific diff colors, card
+  shadows, and darker-hue accents that stay readable on white. Pick the mode in Settings →
+  Appearance; **System** follows Windows and switches live the moment you change the OS
+  theme. The choice is remembered locally, resolved before first paint (no flash), and the
+  chromeless window frame + pre-load backdrop track the theme so there's no dark strip around
+  a light UI. Entrance animations now play only on intentional (re)renders — navigating,
+  filtering, opening history — never on the 3-second background refresh, so the list no
+  longer re-fades under you; reduced-motion preferences are honored.
 - **Crisp text on scaled/multi-monitor displays + two entrance-animation glitches fixed.**
   The app is now **Per-Monitor V2 DPI aware** (app.manifest): WPF defaults to "System" DPI
   awareness, which bitmap-stretches the window — and softens WebView2's text — at non-100%

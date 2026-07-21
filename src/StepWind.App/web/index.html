@@ -1,9 +1,23 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8"/>
-<meta name="color-scheme" content="dark"/>
+<meta name="color-scheme" content="dark light"/>
 <title>StepWind</title>
+<!-- Resolve the saved theme BEFORE first paint so light-mode users never see a dark flash.
+     (app.js owns the full theme engine; this is just the pre-paint bootstrap.) -->
+<script>
+  (function () {
+    try {
+      var m = localStorage.getItem("stepwind.theme");
+      var mode = (m === "light" || m === "dark") ? m : "system";
+      var resolved = mode === "system"
+        ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+        : mode;
+      document.documentElement.dataset.theme = resolved;
+    } catch (e) { /* default stays dark */ }
+  })();
+</script>
 <link rel="stylesheet" href="styles.css"/>
 </head>
 <body>

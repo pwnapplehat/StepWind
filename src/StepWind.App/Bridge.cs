@@ -68,6 +68,7 @@ public sealed class Bridge(MainWindow window)
     {
         // ── window chrome ──
         "win" => DoWindowAction(p?["action"]?.GetValue<string>()),
+        "chromeTheme" => SetChromeTheme(p?["theme"]?.GetValue<string>()),
 
         // ── service pipe: reads ──
         "status" => await PipeAsync(IpcCommand.GetStatus),
@@ -240,6 +241,17 @@ public sealed class Bridge(MainWindow window)
     };
 
     // ─────────────────────────────── shell helpers ───────────────────────────────
+
+    /// <summary>
+    /// Matches the native window frame to the web theme: the 6px resize border (Window
+    /// background) and the WebView's pre-paint color. Without this a light UI shows a thin
+    /// dark strip when not maximized, and a dark flash on load after switching to light.
+    /// </summary>
+    private JsonNode? SetChromeTheme(string? theme)
+    {
+        window.RunOnUi(() => window.SetChromeTheme(theme == "light"));
+        return null;
+    }
 
     private JsonNode? DoWindowAction(string? action)
     {

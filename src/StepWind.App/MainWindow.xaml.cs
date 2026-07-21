@@ -91,6 +91,20 @@ public partial class MainWindow : Window
             {
                 await Web.CoreWebView2.ExecuteScriptAsync($"setTimeout(() => navigate('{view}'), 400)");
             }
+            // Screenshot/E2E helper: force a theme for this session without persisting it.
+            string? theme = args.FirstOrDefault(a => a.StartsWith("--theme=", StringComparison.OrdinalIgnoreCase))?[8..];
+            if (theme is "light" or "dark")
+            {
+                await Web.CoreWebView2.ExecuteScriptAsync(
+                    $"document.documentElement.dataset.theme='{theme}'; call('chromeTheme', {{ theme: '{theme}' }});");
+            }
+            // --settled: freeze entrance animations at their final state so a screenshot never
+            // catches a mid-fade frame (the fast-capture artifact). Kept out of DEBUG guard so
+            // the screenshot harness can use the release build too.
+            if (args.Contains("--settled", StringComparer.OrdinalIgnoreCase))
+            {
+                await Web.CoreWebView2.ExecuteScriptAsync("document.body.classList.add('no-anim')");
+            }
             if (args.Contains("--autopick", StringComparer.OrdinalIgnoreCase))
             {
                 await Web.CoreWebView2.ExecuteScriptAsync(
@@ -118,6 +132,19 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() => Web.CoreWebView2?.PostWebMessageAsJson(json));
 
     internal void RunOnUi(Action action) => Dispatcher.Invoke(action);
+
+    /// <summary>Matches the window frame + WebView backdrop to the web theme (light/dark).</summary>
+    internal void SetChromeTheme(bool light)
+    {
+        var color = light
+            ? System.Windows.Media.Color.FromRgb(0xEE, 0xF0, 0xF4)  // --bg light
+            : System.Windows.Media.Color.FromRgb(0x07, 0x09, 0x0D); // --bg dark
+        Background = new System.Windows.Media.SolidColorBrush(color);
+        if (Web.CoreWebView2 is not null)
+        {
+            Web.DefaultBackgroundColor = System.Drawing.Color.FromArgb(color.R, color.G, color.B);
+        }
+    }
 
     // ─────────────────────────── window verbs (from the web chrome) ───────────────────────────
 

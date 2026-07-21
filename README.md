@@ -104,10 +104,10 @@ chromeless window, the tray icon, the global panic hotkey, and an **allow-listed
 bridge** to the service (the web layer can only call what's explicitly listed, and settings
 patches only carry explicitly allowed keys).
 
-The design itself is a premium deep-slate identity built around the product's core idea: a
-**time river**. Operations flow down the timeline grouped by day, each with a color-coded
-rail (create / change / move / rename / delete), monospaced clock time, the app that did
-it, and an Undo button on hover. Filter chips narrow the river; a scope toggle limits it to
+The design itself is a premium identity built around the product's core idea: a **time
+river**. Operations flow down the timeline grouped by day, each with a color-coded rail
+(create / change / move / rename / delete), monospaced clock time, the app that did it, and
+an Undo button on hover. Filter chips narrow the river; a scope toggle limits it to
 protected folders. **File versions is a folder browser** with breadcrumbs and recursive
 search, paired with full version history and — because the web stack is genuinely better at
 this — an **inline unified diff viewer**: click any version to see exactly what changed
@@ -115,6 +115,15 @@ against the file on disk now (or the version's own content if the file is gone).
 palette (Ctrl+K)** searches every command and every file in the version store. Views
 fade-and-rise, rows cascade in, the nav indicator glides, dialogs scale in, and the
 "protection active" dot has a gentle heartbeat.
+
+**Light and dark, done properly.** Every surface, overlay, shadow, and text accent is a
+theme token, so the light theme is as considered as the dark one — not an inverted
+afterthought. Choose **System** (follows Windows and switches live when you do), **Light**,
+or **Dark** in Settings → Appearance.
+
+| Dark | Light |
+|---|---|
+| <img src="docs/screenshots/app.png" width="410"/> | <img src="docs/screenshots/app-light.png" width="410"/> |
 
 | File versions (folder browser) | AI agents | Protected folders | Settings |
 |---|---|---|---|
