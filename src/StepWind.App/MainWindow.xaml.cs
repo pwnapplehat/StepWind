@@ -22,6 +22,8 @@ public partial class MainWindow : Window
     private const uint VkZ = 0x5A;
 
     private readonly Bridge _bridge;
+    private Task? _webInit;
+    private HwndSource? _hotkeySource;
     private bool _reallyExit;
     private bool _hotkeyRegistered;
 
@@ -32,15 +34,30 @@ public partial class MainWindow : Window
         Tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
         Loaded += async (_, _) => await InitWebAsync();
         StateChanged += (_, _) => OnHostStateChanged();
+
+        // The hotkey lives on its own message-only window, created RIGHT NOW: registering in
+        // OnSourceInitialized (the old approach) silently meant NO panic hotkey until the
+        // window was first shown — i.e. never, in the app's most common state (autostarted
+        // --minimized to tray). Found by the tray-open repro harness.
+        RegisterGlobalHotkey();
+
+        // First-run seeding must happen even when the app starts --minimized and is never
+        // opened this session — it's pipe-only work, independent of the web layer.
+        _ = _bridge.SeedDefaultFoldersOnFirstRunAsync();
     }
 
-    private async Task InitWebAsync()
-    {
-        if (Web.CoreWebView2 is not null)
-        {
-            return;
-        }
+    /// <summary>
+    /// Idempotent web init. The naive "if (CoreWebView2 is null)" guard is NOT enough:
+    /// CoreWebView2 stays null until EnsureCoreWebView2Async COMPLETES, so two callers
+    /// (the window's Loaded event and a tray-open) both passed the check and initialized
+    /// with two different environments — the exact "already initialized with a different
+    /// CoreWebView2Environment" crash seen live. Caching the Task makes every caller await
+    /// the same single initialization.
+    /// </summary>
+    private Task InitWebAsync() => _webInit ??= InitWebCoreAsync();
 
+    private async Task InitWebCoreAsync()
+    {
         string dataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "StepWind", "webview");
@@ -87,12 +104,6 @@ public partial class MainWindow : Window
         };
         Web.CoreWebView2.Navigate("https://app.stepwind/index.html");
         OnHostStateChanged();
-
-        // First-run seeding runs from the host (it must happen even if the user never opens
-        // a particular view): the SYSTEM service can't see the user's real folders, so the
-        // GUI supplies Documents/Desktop/Pictures exactly once, and never again after any
-        // human folder decision (FirstRunCompleted).
-        _ = _bridge.SeedDefaultFoldersOnFirstRunAsync();
     }
 
     /// <summary>Keeps a resize strip when windowed; edge-to-edge when maximized.</summary>
@@ -117,13 +128,7 @@ public partial class MainWindow : Window
 
     internal void WebClose() => Close();
 
-    // ─────────────────────────── tray + hotkey (unchanged behavior) ───────────────────────────
-
-    protected override void OnSourceInitialized(EventArgs e)
-    {
-        base.OnSourceInitialized(e);
-        RegisterGlobalHotkey();
-    }
+    // ─────────────────────────── tray + hotkey ───────────────────────────
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
@@ -138,13 +143,18 @@ public partial class MainWindow : Window
             return;
         }
 
-        var helper = new WindowInteropHelper(this);
-        IntPtr handle = helper.EnsureHandle();
-        HwndSource? source = HwndSource.FromHwnd(handle);
-        source?.AddHook(WndProc);
+        // A dedicated message-only HwndSource: alive from construction (works while hidden
+        // in the tray), independent of whether the visible window's handle exists yet.
+        _hotkeySource = new HwndSource(new HwndSourceParameters("StepWind.Hotkey")
+        {
+            Width = 0,
+            Height = 0,
+            WindowStyle = 0,
+            HwndSourceHook = WndProc,
+        });
         // No-repeat so holding the keys doesn't spam; failure is non-fatal (another app may
         // already own the combo) — the tray menu's "Oh no" item still works.
-        _hotkeyRegistered = RegisterHotKey(handle, HotkeyId, ModControl | ModShift | ModNoRepeat, VkZ);
+        _hotkeyRegistered = RegisterHotKey(_hotkeySource.Handle, HotkeyId, ModControl | ModShift | ModNoRepeat, VkZ);
     }
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -190,9 +200,9 @@ public partial class MainWindow : Window
     private void OnTrayExit(object sender, RoutedEventArgs e)
     {
         _reallyExit = true;
-        if (_hotkeyRegistered)
+        if (_hotkeyRegistered && _hotkeySource is not null)
         {
-            try { UnregisterHotKey(new WindowInteropHelper(this).Handle, HotkeyId); } catch { }
+            try { UnregisterHotKey(_hotkeySource.Handle, HotkeyId); _hotkeySource.Dispose(); } catch { }
         }
 
         Tray.Dispose();

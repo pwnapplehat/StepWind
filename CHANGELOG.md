@@ -6,6 +6,25 @@ All notable changes to StepWind are documented here.
 
 Initial release — an undo button for your whole PC (and a safety net for AI coding agents).
 
+- **Hardened three edge cases in the web-UI host** (all found by driving the real app on a
+  real machine, not in theory): (1) opening the window from the tray/hotkey could crash with
+  "WebView2 was already initialized with a different CoreWebView2Environment" — the window's
+  load handler and the tray-open path both initialized the web view, and the guard only
+  checked the *completed* state, so two initializations raced; init is now a single cached
+  task every caller awaits. (2) The Ctrl+Shift+Z panic hotkey didn't work while the app sat
+  minimized in the tray (its most common state) because it was registered against the visible
+  window's handle, which doesn't exist until first shown — it now lives on a dedicated
+  message-only window created at startup. (3) The bridge serializes its pipe calls: the web
+  UI issues several at once and the service accepts one connection at a time, so a burst could
+  eat into the connect timeout and read as "service not reachable."
+- **Fixed the installer's service-stop race** (the actual cause of a post-upgrade "service not
+  reachable"): setup blind-slept 5s after `sc stop` instead of waiting for the service to be
+  genuinely STOPPED, so a slow stop let the file copy race the live service, and its
+  crash-recovery restart could bring a new instance up on half-copied DLLs (observed: the
+  service then failed to load `System.IO.Pipes.AccessControl` on every pipe accept until the
+  next restart). Setup now disarms the crash-recovery action for the copy, then polls
+  `sc query` until STOPPED before copying. Verified by upgrading in place over a running
+  service: the pipe answers immediately afterward with zero load errors.
 - **Web-rendered UI (WebView2):** the interface is drawn by a dependency-free web layer
   (plain HTML/CSS/JS shipped beside the exe) inside Windows' built-in WebView2 runtime — the
   architecture of VS Code/Discord/Linear/1Password without shipping Chromium. A thin .NET

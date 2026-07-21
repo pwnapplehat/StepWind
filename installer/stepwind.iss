@@ -74,23 +74,49 @@ Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Code]
 // The service holds its binaries locked while running. Files are copied at ssInstall, so the
-// service MUST be fully STOPPED before that -- otherwise an upgrade silently keeps the OLD
-// service binaries (setup reports success while StepWind.Service.exe stays stale, which also
-// means silent auto-updates never actually update the service). We stop it CLEANLY (sc stop,
-// which "sc stop" waits are async, hence the settle sleeps) -- NOT taskkill, because a forced
-// kill looks like a crash to the SCM and trips the failure-action auto-restart that would
-// re-lock the exe mid-copy. The unelevated tray GUI has no failure action, so it is killed.
-procedure CurStepChanged(CurStep: TSetupStep);
+// service MUST be fully STOPPED before that -- otherwise the copy races a live service, and
+// its crash-recovery restart can bring a NEW instance up on top of half-copied DLLs (observed
+// live: the running service then threw "Could not load System.IO.Pipes.AccessControl" on
+// every pipe accept until the next clean restart, so the GUI read "service not reachable").
+//
+// We do NOT blind-sleep: "sc stop" is asynchronous, so a fixed Sleep can return before the
+// service is actually down. Instead we first neutralize the crash-recovery action (so a stop
+// can't be mistaken for a crash and auto-restarted mid-copy), then issue the stop and POLL
+// "sc query" until it reports STOPPED (or is already gone). Only then does the copy proceed.
+procedure StopServiceAndWait;
 var
-  ResultCode: Integer;
+  ResultCode, I: Integer;
+  Output: AnsiString;
+  TmpFile: string;
 begin
-  if CurStep = ssInstall then
+  // Disarm failure actions for the duration of the copy (reset delay 0, no restart commands).
+  Exec(ExpandConstant('{sys}\sc.exe'), 'failure StepWind reset= 0 actions= ///', '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\sc.exe'), 'stop StepWind', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  TmpFile := ExpandConstant('{tmp}\sw_scq.txt');
+  for I := 0 to 40 do
   begin
-    Exec(ExpandConstant('{sys}\sc.exe'), 'stop StepWind', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Sleep(5000);
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM StepWind.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{cmd}'), '/c sc query StepWind > "' + TmpFile + '" 2>&1', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if LoadStringFromFile(TmpFile, Output) then
+    begin
+      // 1060 = service not installed (fresh install / already removed); STOPPED = down.
+      if (Pos('1060', Output) > 0) or (Pos('STOPPED', Output) > 0) then
+        Break;
+    end;
     Sleep(500);
   end;
+
+  // The unelevated tray GUI has no failure action, so a forced kill is safe and frees StepWind.exe.
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM StepWind.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(400);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+    StopServiceAndWait;
 end;
 
 // The GUI renders in WebView2. Win11 + current Win10 already have the Evergreen runtime;

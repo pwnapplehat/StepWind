@@ -25,6 +25,15 @@ public sealed class Bridge(MainWindow window)
 {
     private readonly PipeClient _pipe = new();
 
+    /// <summary>
+    /// Serializes pipe calls. The service handles one pipe connection at a time, and unlike
+    /// the old (inherently sequential) WPF view-model, the web UI issues calls concurrently —
+    /// racing them into the server's single accept loop made bursts eat into the 5s connect
+    /// timeout and read as "service is not available". Queuing client-side keeps every call
+    /// fast and ordered.
+    /// </summary>
+    private readonly SemaphoreSlim _pipeGate = new(1, 1);
+
     /// <summary>Settings keys the web layer may patch. Anything else is rejected.</summary>
     private static readonly HashSet<string> AllowedSettingsKeys = new(StringComparer.Ordinal)
     {
@@ -105,7 +114,17 @@ public sealed class Bridge(MainWindow window)
 
     private async Task<JsonNode?> PipeAsync(IpcCommand cmd, string? a1 = null, string? a2 = null, int limit = 200)
     {
-        IpcResponse resp = await _pipe.SendAsync(new IpcRequest { Command = cmd, Arg1 = a1, Arg2 = a2, Limit = limit });
+        IpcResponse resp;
+        await _pipeGate.WaitAsync();
+        try
+        {
+            resp = await _pipe.SendAsync(new IpcRequest { Command = cmd, Arg1 = a1, Arg2 = a2, Limit = limit });
+        }
+        finally
+        {
+            _pipeGate.Release();
+        }
+
         if (!resp.Ok)
         {
             throw new InvalidOperationException(resp.Error ?? "The StepWind service did not respond.");
