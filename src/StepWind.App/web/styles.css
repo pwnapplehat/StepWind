@@ -431,7 +431,17 @@ body {
 
 /* ═══════════════ Settings ═══════════════ */
 
-.set-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; max-width: 760px; }
+/* Settings uses the full width like every other tab (it was capped at 760px, wasting the
+   right half). The SCROLLER and the MULTICOL must be different elements: a height-constrained
+   flex item that both scrolls AND has column-count collapses back to one column, so .set-scroll
+   only scrolls and the inner .set-cols does the two-column masonry (auto height). Each
+   label+card is a .set-section that never splits across a column; columns collapse to one on a
+   narrow window. */
+.set-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.set-cols { column-count: 2; column-gap: 20px; }
+.set-section { break-inside: avoid; display: block; }
+.set-section:first-child .set-label { padding-top: 4px; }
+@media (max-width: 900px) { .set-cols { column-count: 1; } }
 .set-label { font-size: 10px; font-weight: 600; letter-spacing: 1.4px; text-transform: uppercase; color: var(--text-3); padding: 16px 2px 8px; }
 .set-card { padding: 14px 16px; }
 .set-row { display: flex; align-items: center; gap: 16px; padding: 6px 0; }
@@ -508,7 +518,9 @@ body {
 .btn.danger:hover { filter: brightness(1.1); }
 
 /* Retention inputs */
-.ret-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-top: 12px; }
+/* auto-fit so the five fields sit in a row at full width but wrap gracefully in the narrower
+   two-column Settings layout instead of squashing. */
+.ret-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 10px; margin-top: 12px; }
 .ret-cell label { display: block; font-size: 10.5px; color: var(--text-3); margin-bottom: 5px; }
 .ret-cell input {
   width: 100%; padding: 7px 10px; border-radius: var(--r-sm);

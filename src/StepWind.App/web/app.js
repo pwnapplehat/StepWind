@@ -832,82 +832,96 @@ async function loadSettings() {
       </div>
     </div>
     <div class="set-scroll">
-      <div class="set-label">Updates</div>
-      <div class="card set-card"><div class="set-row">
-        <div><div class="set-title">Automatic silent updates</div>
-        <div class="set-sub">The background service checks GitHub daily, verifies each update's SHA-256, and installs it with zero prompts.</div></div>
-        ${sw("sw-update", s?.AutoUpdateEnabled)}
-      </div></div>
+     <div class="set-cols">
+      <div class="set-section">
+        <div class="set-label">Updates</div>
+        <div class="card set-card"><div class="set-row">
+          <div><div class="set-title">Automatic silent updates</div>
+          <div class="set-sub">The background service checks GitHub daily, verifies each update's SHA-256, and installs it with zero prompts.</div></div>
+          ${sw("sw-update", s?.AutoUpdateEnabled)}
+        </div></div>
+      </div>
 
-      <div class="set-label">Protection</div>
-      <div class="card set-card">
-        <div class="set-row">
-          <div><div class="set-title">Flight recorder</div>
-          <div class="set-sub">Records file operations on all NTFS drives for the timeline and one-click undo. Takes effect immediately — no restart.</div></div>
-          ${sw("sw-fr", s?.FlightRecorderEnabled)}
-        </div>
-        <div class="set-row">
-          <div><div class="set-title">Encryption at rest</div>
-          <div class="set-sub">AES-256-GCM with a key sealed by Windows (machine scope) — a stolen or offline drive can't read your history. Toggling re-encodes existing versions in the background; everything stays restorable throughout. File contents are encrypted; the index of names and dates is not.</div>
-          ${lastStatus?.ReEncoding ? '<div class="badge-live">Re-encoding your history in the background…</div>' : ""}</div>
-          ${sw("sw-enc", s?.EncryptionEnabled)}
-        </div>
-        <div class="set-row">
-          <div><div class="set-title">History storage</div>
-          <div class="set-sub">Deduplicated and compressed — old versions are garbage-collected automatically per the retention rules below.</div></div>
-          <div class="set-value">${lastStatus ? `${(lastStatus.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(lastStatus.StoreBytes)}` : "—"}</div>
+      <div class="set-section">
+        <div class="set-label">Protection</div>
+        <div class="card set-card">
+          <div class="set-row">
+            <div><div class="set-title">Flight recorder</div>
+            <div class="set-sub">Records file operations on all NTFS drives for the timeline and one-click undo. Takes effect immediately — no restart.</div></div>
+            ${sw("sw-fr", s?.FlightRecorderEnabled)}
+          </div>
+          <div class="set-row">
+            <div><div class="set-title">Encryption at rest</div>
+            <div class="set-sub">AES-256-GCM with a key sealed by Windows (machine scope) — a stolen or offline drive can't read your history. Toggling re-encodes existing versions in the background; everything stays restorable throughout. File contents are encrypted; the index of names and dates is not.</div>
+            ${lastStatus?.ReEncoding ? '<div class="badge-live">Re-encoding your history in the background…</div>' : ""}</div>
+            ${sw("sw-enc", s?.EncryptionEnabled)}
+          </div>
+          <div class="set-row">
+            <div><div class="set-title">History storage</div>
+            <div class="set-sub">Deduplicated and compressed — old versions are garbage-collected automatically per the retention rules below.</div></div>
+            <div class="set-value">${lastStatus ? `${(lastStatus.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(lastStatus.StoreBytes)}` : "—"}</div>
+          </div>
         </div>
       </div>
 
-      <div class="set-label">Retention</div>
-      <div class="card set-card">
-        <div class="set-sub">How long versions are kept. Everything is kept for the first window, then thinned to hourly and daily as versions age.</div>
-        <div class="ret-grid">
-          ${[["ret-kah", "Keep all (hours)", s?.RetentionKeepAllHours],
-             ["ret-hd", "Hourly (days)", s?.RetentionHourlyDays],
-             ["ret-dd", "Daily (days)", s?.RetentionDailyDays],
-             ["ret-mad", "Max age (days)", s?.RetentionMaxAgeDays],
-             ["ret-mv", "Max per file", s?.RetentionMaxVersionsPerFile]]
-            .map(([id, label, val]) => `
-              <div class="ret-cell"><label for="${id}">${label}</label>
-              <input id="${id}" type="number" min="0" value="${val ?? ""}"/></div>`).join("")}
-        </div>
-        <div class="set-actions">
-          <button class="btn" id="ret-run" title="Apply the retention rules immediately instead of waiting for the daily pass">Run cleanup now</button>
-          <button class="btn primary" id="ret-apply" style="min-width:90px">Apply</button>
-        </div>
-      </div>
-
-      <div class="set-label">Data management</div>
-      <div class="card set-card">
-        <div class="set-row">
-          <div><div class="set-title">Clean up unprotected history</div>
-          <div class="set-sub">Deletes saved versions belonging to folders you no longer protect.</div></div>
-          <button class="btn" id="dm-unprot" style="margin-left:auto;flex-shrink:0">Clean up</button>
-        </div>
-        <div class="set-row">
-          <div><div class="set-title" style="color:var(--danger)">Delete all history</div>
-          <div class="set-sub">Permanently deletes every saved version of every file and frees the disk space. Your actual files are not touched.</div></div>
-          <button class="btn danger" id="dm-all" style="margin-left:auto;flex-shrink:0">Delete all…</button>
+      <div class="set-section">
+        <div class="set-label">Retention</div>
+        <div class="card set-card">
+          <div class="set-sub">How long versions are kept. Everything is kept for the first window, then thinned to hourly and daily as versions age.</div>
+          <div class="ret-grid">
+            ${[["ret-kah", "Keep all (hours)", s?.RetentionKeepAllHours],
+               ["ret-hd", "Hourly (days)", s?.RetentionHourlyDays],
+               ["ret-dd", "Daily (days)", s?.RetentionDailyDays],
+               ["ret-mad", "Max age (days)", s?.RetentionMaxAgeDays],
+               ["ret-mv", "Max per file", s?.RetentionMaxVersionsPerFile]]
+              .map(([id, label, val]) => `
+                <div class="ret-cell"><label for="${id}">${label}</label>
+                <input id="${id}" type="number" min="0" value="${val ?? ""}"/></div>`).join("")}
+          </div>
+          <div class="set-actions">
+            <button class="btn" id="ret-run" title="Apply the retention rules immediately instead of waiting for the daily pass">Run cleanup now</button>
+            <button class="btn primary" id="ret-apply" style="min-width:90px">Apply</button>
+          </div>
         </div>
       </div>
 
-      <div class="set-label">Shortcuts</div>
-      <div class="card set-card"><div class="set-row">
-        <div><div class="set-title">Panic hotkey</div>
-        <div class="set-sub">Opens StepWind from anywhere the moment something goes wrong.</div></div>
-        <div class="set-value" style="color:var(--text)">Ctrl + Shift + Z</div>
-      </div></div>
-
-      <div class="set-label">About</div>
-      <div class="card set-card" style="margin-bottom:8px"><div class="set-row">
-        <div><div class="set-title">StepWind <span id="ab-ver" style="color:var(--text-3);font-weight:400"></span></div>
-        <div class="set-sub">Free · open source · 100% local · no cloud · no account · no telemetry</div></div>
-        <div style="margin-left:auto;display:flex;gap:8px;flex-shrink:0">
-          <button class="btn" id="ab-site">stepwind.app</button>
-          <button class="btn" id="ab-repo">GitHub</button>
+      <div class="set-section">
+        <div class="set-label">Data management</div>
+        <div class="card set-card">
+          <div class="set-row">
+            <div><div class="set-title">Clean up unprotected history</div>
+            <div class="set-sub">Deletes saved versions belonging to folders you no longer protect.</div></div>
+            <button class="btn" id="dm-unprot" style="margin-left:auto;flex-shrink:0">Clean up</button>
+          </div>
+          <div class="set-row">
+            <div><div class="set-title" style="color:var(--danger)">Delete all history</div>
+            <div class="set-sub">Permanently deletes every saved version of every file and frees the disk space. Your actual files are not touched.</div></div>
+            <button class="btn danger" id="dm-all" style="margin-left:auto;flex-shrink:0">Delete all…</button>
+          </div>
         </div>
-      </div></div>
+      </div>
+
+      <div class="set-section">
+        <div class="set-label">Shortcuts</div>
+        <div class="card set-card"><div class="set-row">
+          <div><div class="set-title">Panic hotkey</div>
+          <div class="set-sub">Opens StepWind from anywhere the moment something goes wrong.</div></div>
+          <div class="set-value" style="color:var(--text)">Ctrl + Shift + Z</div>
+        </div></div>
+      </div>
+
+      <div class="set-section">
+        <div class="set-label">About</div>
+        <div class="card set-card" style="margin-bottom:8px"><div class="set-row">
+          <div><div class="set-title">StepWind <span id="ab-ver" style="color:var(--text-3);font-weight:400"></span></div>
+          <div class="set-sub">Free · open source · 100% local · no cloud · no account · no telemetry</div></div>
+          <div style="margin-left:auto;display:flex;gap:8px;flex-shrink:0">
+            <button class="btn" id="ab-site">stepwind.app</button>
+            <button class="btn" id="ab-repo">GitHub</button>
+          </div>
+        </div></div>
+      </div>
+     </div>
     </div>`;
 
   call("appInfo").then((info) => { const el = $("#ab-ver"); if (el) el.textContent = "v" + info.version; });
