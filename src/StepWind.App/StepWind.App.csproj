@@ -7,6 +7,7 @@
     <RootNamespace>StepWind.App</RootNamespace>
     <AssemblyName>StepWind</AssemblyName>
     <ApplicationIcon Condition="Exists('..\..\assets\icon.ico')">..\..\assets\icon.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <Description>StepWind — an undo button for your whole PC. Real-time file protection and version history.</Description>
   </PropertyGroup>
 

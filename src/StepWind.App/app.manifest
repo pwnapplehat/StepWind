@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="StepWind.App"/>
+
+  <!--
+    Per-Monitor V2 DPI awareness. WPF defaults to "System" DPI awareness: at non-100% display
+    scaling (125%/150% laptops are the norm) or across monitors with different scales, Windows
+    bitmap-STRETCHES the window, which softens WebView2's text. PMv2 makes the whole app —
+    WPF host and the WebView2 content — render at each monitor's true pixel density, so text
+    stays ClearType-crisp everywhere and re-sharpens live when the window moves or the scale
+    changes. (At 100% single-monitor it's already 1:1, so this is a no-op there; it's the fix
+    for every scaled/multi-monitor setup.)
+  -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/PM</dpiAware>
+    </windowsSettings>
+  </application>
+
+  <!-- Declare Windows 10/11 support so the OS reports the true version (affects DPI + WebView2). -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>

@@ -6,6 +6,17 @@ All notable changes to StepWind are documented here.
 
 Initial release — an undo button for your whole PC (and a safety net for AI coding agents).
 
+- **Crisp text on scaled/multi-monitor displays + two entrance-animation glitches fixed.**
+  The app is now **Per-Monitor V2 DPI aware** (app.manifest): WPF defaults to "System" DPI
+  awareness, which bitmap-stretches the window — and softens WebView2's text — at non-100%
+  display scaling or across monitors with different scales; PMv2 renders both the host and
+  the web content at each monitor's true pixel density (ClearType-crisp, re-sharpening live
+  as the window moves). Also: switching to File versions briefly flashed a horizontal
+  scrollbar, and the AI agents cards jumped for a moment on open — both were the entrance
+  animations (rows/cards translate a few px on X, and the vertical scrollbar appearing mid-
+  stagger reflowed the grid). Fixed by clipping the transient horizontal overflow
+  (`overflow-x: hidden`) and reserving the scrollbar gutter (`scrollbar-gutter: stable`) on
+  the scroll containers, so nothing shifts.
 - **Hardened three edge cases in the web-UI host** (all found by driving the real app on a
   real machine, not in theory): (1) opening the window from the tray/hotkey could crash with
   "WebView2 was already initialized with a different CoreWebView2Environment" — the window's

@@ -750,8 +750,8 @@ async function loadAgents() {
         : `${found} AI tool${found === 1 ? "" : "s"} found on this PC · ${connected} connected.`}
         Connecting merges StepWind's MCP server into that tool's config — a backup is taken first and every change is reversible. The agent gets read + restore powers only: it can never delete history or change settings.</div>
     </div>
-    <div style="flex:1;min-height:0;overflow-y:auto">
-      <div class="card-grid" style="overflow:visible">
+    <div class="scroll-y" style="flex:1;min-height:0">
+      <div class="card-grid" style="overflow:visible;scrollbar-gutter:auto">
         ${agents.map((a, i) => `
           <div class="card g-card ${a.detected ? "" : "dim"}" data-i="${i}">
             <div class="g-head">

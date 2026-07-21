@@ -279,7 +279,14 @@ body {
 
 /* ═══════════════ Timeline ═══════════════ */
 
-.tl-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
+/* Vertical scrollers used across views. overflow-x:hidden clips the few-px horizontal
+   overshoot of the entrance animations (row-in/card-in translate on X), which otherwise
+   flashed a transient horizontal scrollbar for the ~0.3s the animation ran. scrollbar-gutter
+   reserves the vertical scrollbar's width up front, so it APPEARING partway through a
+   staggered entrance can't shrink the content box and reflow a grid (the "cards jump" bug). */
+.scroll-y { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+
+.tl-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding-right: 2px; }
 
 .tl-day {
   position: sticky; top: 0; z-index: 2;
@@ -339,7 +346,7 @@ body {
 .files-crumbs .fc.here { color: var(--text); font-weight: 600; cursor: default; }
 .files-crumbs .sep { color: var(--text-3); opacity: 0.5; }
 
-.files-list { flex: 1; min-height: 0; overflow-y: auto; }
+.files-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
 .f-row {
   display: flex; align-items: center; gap: 11px;
   padding: 8px 10px; border-radius: var(--r-sm); cursor: pointer;
@@ -363,7 +370,7 @@ body {
 .hist-head { padding: 2px 2px 10px; }
 .hist-title { font-size: 13px; font-weight: 600; }
 .hist-path { font-family: var(--mono); font-size: 10.5px; color: var(--text-3); margin-top: 3px; word-break: break-all; user-select: text; }
-.hist-list { overflow-y: auto; max-height: 34%; margin-bottom: 10px; flex-shrink: 0; }
+.hist-list { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; max-height: 34%; margin-bottom: 10px; flex-shrink: 0; }
 .v-row {
   display: flex; align-items: center; gap: 12px; padding: 7px 10px;
   border-radius: var(--r-sm); border: 1px solid transparent; cursor: pointer;
@@ -395,7 +402,7 @@ body {
 
 /* ═══════════════ Folders / Agents ═══════════════ */
 
-.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; align-content: start; overflow-y: auto; flex: 1; padding: 2px; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; align-content: start; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; flex: 1; padding: 2px; }
 .g-card {
   padding: 15px 16px; display: flex; flex-direction: column; gap: 10px;
   opacity: 0; animation: card-in 0.4s var(--ease) forwards;
@@ -424,7 +431,7 @@ body {
 
 /* ═══════════════ Settings ═══════════════ */
 
-.set-scroll { flex: 1; min-height: 0; overflow-y: auto; max-width: 760px; }
+.set-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; max-width: 760px; }
 .set-label { font-size: 10px; font-weight: 600; letter-spacing: 1.4px; text-transform: uppercase; color: var(--text-3); padding: 16px 2px 8px; }
 .set-card { padding: 14px 16px; }
 .set-row { display: flex; align-items: center; gap: 16px; padding: 6px 0; }
