@@ -159,6 +159,67 @@ public partial class MainWindow
                     File.Exists(Path.Combine(src, "precious.txt")) ? "content intact" : "CONTENT MISSING");
             }
 
+            // ── 7b. Exclusions: a path excluded inside a protected folder is NOT versioned,
+            //         and versioning resumes once the exclusion is removed. Unique filenames
+            //         per run so a prior run's store can never mask a real regression. ──
+            string tag = DateTime.Now.ToString("HHmmss");
+            string exclName = $"excl-{tag}.txt", keepName = $"keep-{tag}.txt", resumeName = $"resume-{tag}.txt";
+            Directory.CreateDirectory(E2EScratch);
+            string exclDir = Path.Combine(E2EScratch, "excluded-build");
+            Directory.CreateDirectory(exclDir);
+            await Js($$"""
+                (async () => {
+                  try {
+                    const s = await call('settings');
+                    const set = (s.WatchedFolders || []).filter(f => f.toLowerCase() !== {{JsonSerializer.Serialize(E2EScratch.ToLowerInvariant())}});
+                    set.push({{JsonSerializer.Serialize(E2EScratch)}});
+                    await call('patch', { patch: { WatchedFolders: set, ExcludedPrefixes: [{{JsonSerializer.Serialize(exclDir)}}] } });
+                    const after = await call('settings');
+                    window.__xStored = (after.ExcludedPrefixes || []).some(p => p.toLowerCase() === {{JsonSerializer.Serialize(exclDir.ToLowerInvariant())}});
+                  } catch (e) { window.__xStored = 'ERR:' + e.message; }
+                })()
+                """);
+            await WaitJs("window.__xStored !== undefined");
+            Log("exclusion-stored", await Js("window.__xStored") == "true", (await Js("String(window.__xStored)")).Trim('"'));
+
+            await Task.Delay(2500); // let the watch rebuild + settle before writing
+            await File.WriteAllTextAsync(Path.Combine(exclDir, exclName), "should NOT be versioned");
+            await File.WriteAllTextAsync(Path.Combine(E2EScratch, keepName), "should be versioned");
+            await Task.Delay(6000); // capture window
+
+            await Js($$"""
+                (async () => {
+                  const ex = await call('browse', { path: '', query: '{{exclName}}' });
+                  const inc = await call('browse', { path: '', query: '{{keepName}}' });
+                  window.__xExcluded = ex.length === 0;   // excluded file has NO history
+                  window.__xIncluded = inc.length > 0;    // sibling outside the exclusion does
+                })()
+                """);
+            await WaitJs("window.__xExcluded !== undefined", 12000);
+            Log("excluded-file-not-versioned", await Js("window.__xExcluded") == "true");
+            Log("sibling-still-versioned", await Js("window.__xIncluded") == "true");
+
+            // Remove the exclusion → a fresh file in the same dir IS versioned.
+            await Js("call('patch', { patch: { ExcludedPrefixes: [] } }).then(() => window.__x3 = true)");
+            await WaitJs("window.__x3 === true");
+            await Task.Delay(2500);
+            await File.WriteAllTextAsync(Path.Combine(exclDir, resumeName), "now it SHOULD be versioned");
+            await Task.Delay(6000);
+            await Js($"call('browse', {{ path: '', query: '{resumeName}' }}).then(r => window.__xResumed = r.length > 0)");
+            await WaitJs("window.__xResumed !== undefined", 12000);
+            Log("versioning-resumes-after-unexclude", await Js("window.__xResumed") == "true");
+
+            // Clean up this test's protected folder + history.
+            await Js("""
+                (async () => {
+                  const s = await call('settings');
+                  await call('patch', { patch: { WatchedFolders: (s.WatchedFolders||[]).filter(f => !f.toLowerCase().includes('_swweb_e2e')), ExcludedPrefixes: [] } });
+                  await call('purge', { selector: '_swweb_e2e' });
+                  window.__xClean = true;
+                })()
+                """);
+            await WaitJs("window.__xClean === true", 12000);
+
             // ── 8. Agents view renders real detections (no connect/disconnect — real machine) ──
             await Js("navigate('agents')");
             Log("agents-render", await WaitJs("document.querySelectorAll('#view-agents .g-card').length >= 10"));

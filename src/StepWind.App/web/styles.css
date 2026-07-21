@@ -521,6 +521,17 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
 .g-foot { display: flex; align-items: center; gap: 10px; }
 .g-path { flex: 1; min-width: 0; font-family: var(--mono); font-size: 10px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+/* Folders view scrolls as one page now (folder cards + the exclusions section below). */
+.fo-scroll { flex: 1; min-height: 0; }
+
+.excl-row {
+  display: flex; align-items: center; gap: 11px; padding: 8px 2px;
+}
+.excl-row + .excl-row { border-top: 1px solid var(--line); }
+.excl-ico { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: var(--warn-text); stroke-width: 1.7; stroke-linecap: round; }
+.excl-path { flex: 1; min-width: 0; font-family: var(--mono); font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.excl-remove { padding: 6px 8px; flex-shrink: 0; }
+
 .banner {
   display: flex; gap: 11px; padding: 13px 15px; margin-bottom: 14px;
   font-size: 12px; color: var(--text-2); line-height: 1.55;

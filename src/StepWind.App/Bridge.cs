@@ -37,9 +37,9 @@ public sealed class Bridge(MainWindow window)
     /// <summary>Settings keys the web layer may patch. Anything else is rejected.</summary>
     private static readonly HashSet<string> AllowedSettingsKeys = new(StringComparer.Ordinal)
     {
-        "WatchedFolders", "AutoUpdateEnabled", "EncryptionEnabled", "FlightRecorderEnabled",
-        "TimelineProtectedOnly", "RetentionKeepAllHours", "RetentionHourlyDays",
-        "RetentionDailyDays", "RetentionMaxAgeDays", "RetentionMaxVersionsPerFile",
+        "WatchedFolders", "ExcludedPrefixes", "AutoUpdateEnabled", "EncryptionEnabled",
+        "FlightRecorderEnabled", "TimelineProtectedOnly", "RetentionKeepAllHours",
+        "RetentionHourlyDays", "RetentionDailyDays", "RetentionMaxAgeDays", "RetentionMaxVersionsPerFile",
     };
 
     public void NotifyWindowState(bool maximized) =>

@@ -83,6 +83,9 @@ looks wrong. Disconnecting removes exactly our entry and nothing else.
 - **Your data, your controls** — removing a folder asks whether to keep or delete its saved
   versions; Settings has delete-all, clean-up-unprotected, and run-cleanup-now (all confirmed
   first); retention windows are editable; the timeline can be scoped to protected folders only.
+- **Exclusions** — exclude any subfolder or path inside a protected folder (heavy build
+  outputs, datasets, caches) from Protected folders → Excluded; adding one offers to clear
+  the versions already saved under it. This is on top of the automatic skips.
 - **Smart exclusions** — build junk (`node_modules`, `target`…), caches, and — importantly —
   OneDrive online-only files are skipped (versioning a placeholder would force a full download).
   Files held under an *exclusive* lock (e.g. an open Outlook PST) are captured when the app

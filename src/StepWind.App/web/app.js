@@ -667,12 +667,15 @@ function loadFiles() {
 
 /* ═══════════════ Folders view ═══════════════ */
 
+let excludedPrefixes = [];
+
 async function loadFolders() {
   const host = $("#view-folders");
   let settings = null;
   try { settings = await call("settings"); } catch { }
   const folders = settings?.WatchedFolders || [];
   watchedFolders = folders;
+  excludedPrefixes = settings?.ExcludedPrefixes || [];
 
   host.innerHTML = `
     <div class="page-head">
@@ -684,11 +687,12 @@ async function loadFolders() {
         <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Add folder
       </button></div>
     </div>
+    <div class="fo-scroll scroll-y">
     <div class="card banner">
       <svg viewBox="0 0 24 24"><path d="M12 22s8-3.4 8-10V5.5L12 2 4 5.5V12c0 6.6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
       <div>A version is captured a couple of seconds after a file settles. Identical re-saves are skipped, build junk and caches are excluded automatically, and restores never overwrite your current file — the recovered version lands next to it. Removing a folder only stops new captures: already-saved versions stay restorable until retention ages them out.</div>
     </div>
-    <div class="card-grid enter">
+    <div class="card-grid enter" style="overflow:visible;flex:none;scrollbar-gutter:auto">
       ${folders.map((f, i) => `
         <div class="card g-card" data-i="${i}">
           <div class="g-head">
@@ -707,12 +711,106 @@ async function loadFolders() {
           </div>
         </div>`).join("")}
       ${!folders.length ? `<div class="empty" style="grid-column:1/-1"><div><div class="empty-title">No folders protected</div>Add a folder to start building version history for the files inside it.</div></div>` : ""}
+    </div>
+
+    <div class="set-label" style="margin-top:20px">Excluded from protection</div>
+    <div class="card set-card" style="max-width:820px">
+      <div style="display:flex;align-items:flex-start;gap:16px">
+        <div class="set-sub" style="margin:0;max-width:none">Subfolders or paths inside a protected folder that StepWind should skip — heavy build outputs, datasets, or caches you don't want versioned. (<span class="mono" style="font-size:11px">node_modules</span>, <span class="mono" style="font-size:11px">.git</span>, temp files and cloud online-only files are already skipped automatically.)</div>
+        <button class="btn" id="excl-add" style="flex-shrink:0">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Add exclusion
+        </button>
+      </div>
+      <div id="excl-list" style="margin-top:12px">
+        ${excludedPrefixes.length ? excludedPrefixes.map((p) => `
+          <div class="excl-row">
+            <svg viewBox="0 0 24 24" class="excl-ico"><path d="M4.9 4.9 19 19M9 4.6A9 9 0 0 1 19.4 15M15 19.4A9 9 0 0 1 4.6 9"/><circle cx="12" cy="12" r="9"/></svg>
+            <div class="excl-path" title="${esc(p)}">${esc(p)}</div>
+            <button class="btn danger-ghost excl-remove" data-p="${esc(p)}" title="Remove this exclusion (future changes here get versioned again)">
+              <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>`).join("")
+        : `<div class="set-sub" style="margin:2px 0 0">Nothing excluded. Everything inside your protected folders is versioned (minus the automatic skips above).</div>`}
+      </div>
+    </div>
     </div>`;
 
   $$(".g-card", host).forEach((c, i) => stagger(c, i));
   $$(".g-open", host).forEach((b) => (b.onclick = () => call("openPath", { path: b.dataset.p })));
   $("#fo-add", host).onclick = addFolder;
   $$(".g-remove", host).forEach((b) => (b.onclick = () => removeFolder(b.dataset.p)));
+  $("#excl-add", host).onclick = addExclusion;
+  $$(".excl-remove", host).forEach((b) => (b.onclick = () => removeExclusion(b.dataset.p)));
+}
+
+/* Store-relative selector ("<protected-folder-name>/sub/path") for an absolute path inside a
+   protected folder — used to purge already-saved versions when excluding. null if the path
+   isn't under any protected folder. */
+function storeSelectorFor(absPath) {
+  const lower = absPath.toLowerCase();
+  for (const root of watchedFolders) {
+    const r = root.replace(/[\\/]+$/, "");
+    const rl = r.toLowerCase();
+    if (lower === rl || lower.startsWith(rl + "\\")) {
+      const base = r.split("\\").pop();
+      const rest = absPath.slice(r.length).replace(/^[\\/]+/, "").replace(/\\/g, "/");
+      return rest ? base + "/" + rest : base;
+    }
+  }
+  return null;
+}
+
+async function addExclusion() {
+  const folder = await call("pickFolder", { title: "Choose a folder to exclude from versioning" });
+  if (!folder) return;
+  if (excludedPrefixes.some((p) => p.toLowerCase() === folder.toLowerCase())) {
+    toast("ok", "Already excluded", folder);
+    return;
+  }
+  // An exclusion only does something inside a protected folder — warn (but still allow, e.g.
+  // if the user plans to protect the parent next).
+  const inProtected = storeSelectorFor(folder) !== null;
+  if (!inProtected) {
+    const go = await dlg.confirm("This folder isn't inside a protected one",
+      `${folder}\n\nExclusions only affect paths inside your protected folders, so this won't change anything unless you protect a parent folder later. Add it anyway?`,
+      "Add anyway");
+    if (!go) return;
+  }
+
+  try {
+    await call("patch", { patch: { ExcludedPrefixes: [...excludedPrefixes, folder] } });
+
+    // Offer to clear versions already captured under it (same keep/delete decision as folder
+    // removal), when it's inside a protected folder and thus could have history.
+    const selector = storeSelectorFor(folder);
+    if (selector) {
+      const choice = await dlg.three("Excluded — what about versions already saved here?",
+        `${folder}\n\nStepWind will stop versioning new changes here. You can keep the versions already saved (still restorable until retention ages them out) or delete them now to free space.`,
+        "Keep saved versions", "Delete them");
+      if (choice === "secondary") {
+        const res = await call("purge", { selector });
+        toast("ok", "Excluded + cleared", purgeSummary(res));
+      } else {
+        toast("ok", "Excluded", "New changes here won't be versioned.");
+      }
+    } else {
+      toast("ok", "Excluded", "New changes here won't be versioned.");
+    }
+    await loadFolders();
+    await pollStatus();
+  } catch (err) {
+    dlg.notice("Couldn't add exclusion", err.message);
+  }
+}
+
+async function removeExclusion(prefix) {
+  try {
+    await call("patch", { patch: { ExcludedPrefixes: excludedPrefixes.filter((p) => p !== prefix) } });
+    toast("ok", "Exclusion removed", "Changes here will be versioned again.");
+    await loadFolders();
+  } catch (err) {
+    dlg.notice("Couldn't remove exclusion", err.message);
+  }
 }
 
 async function addFolder() {

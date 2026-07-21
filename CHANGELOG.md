@@ -6,6 +6,15 @@ All notable changes to StepWind are documented here.
 
 Initial release — an undo button for your whole PC (and a safety net for AI coding agents).
 
+- **User-managed exclusions (Protected folders → Excluded).** You can now exclude a subfolder
+  or path inside a protected folder from versioning — heavy build outputs, datasets, or caches
+  you don't want kept. The engine already honored an exclusion list (and still auto-skips
+  `node_modules`/`.git`/temp/cloud-online-only files); this exposes it: a folder picker to add
+  one, a list to remove them (versioning resumes immediately), and — since an exclusion inside
+  a protected folder may already have saved versions — adding one offers the same keep-or-
+  delete-history choice as removing a folder. Verified end-to-end: a file written under an
+  exclusion gets no history while its sibling does, and versioning resumes the instant the
+  exclusion is removed.
 - **Full light theme (System / Light / Dark).** A soft-white light theme built to the same
   standard as the dark one: every surface, overlay, shadow, and text accent is a theme token
   (no hardcoded color assumes a dark background), with light-specific diff colors, card
