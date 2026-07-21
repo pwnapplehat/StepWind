@@ -39,6 +39,19 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   POSIX-unlink deletes (the modern Windows delete path) are detected **at the marker-rename
   instant** — measured on real hardware: the FileDelete record can lag minutes behind when
   another process (an AV scan, an indexer) still holds the file, and the timeline must not.
+  Process attribution is held to a hard rule: **a wrong name is worse than no name.** Only
+  authored actions count (namespace creates, writes, renames, deletes, set-disposition, and
+  delete-on-close opens — how `del` and DeleteFile actually delete, measured on real
+  hardware) — never handle opens or stats, which is how watchers/antivirus/indexers used to
+  get blamed for other apps' changes. Each operation is matched against a per-path history
+  by its OWN kind and timestamp (a delete only matches delete-shaped events from the moments
+  at or before it, so late reactions can't steal attribution), the kernel's own lazy-writer
+  (System, pid 4) is never treated as an author, the ETW session tracks process start/stop
+  so recycled PIDs resolve to the process that owned the PID at event time, and when nothing
+  fits the label is honestly blank. Because real-time ETW delivery lags the USN journal by a
+  buffer flush, each poll re-attributes still-blank operations from the last few seconds —
+  verified live: an author's create/modify/delete all name the author even while another
+  process aggressively stats the same file throughout.
 - **Folder time machine:** watched folders get continuous version history — content-defined
   chunked, deduplicated, compressed, crash-safe content-addressed storage, tiered retention +
   mark-sweep GC, and byte-exact restore that never overwrites current work. Identical

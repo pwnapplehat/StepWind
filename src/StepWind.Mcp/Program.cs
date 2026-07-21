@@ -10,7 +10,15 @@ using StepWind.Mcp;
 // trip to the already-running, elevated StepWind service (StepWind.Mcp.Tools.StepWindTools →
 // StepWindGateway → StepWind.Core.Ipc.PipeClient), the exact same pattern the tray GUI uses.
 // No new privileges, no new service — just another unelevated client of the existing pipe.
-var builder = Host.CreateApplicationBuilder(args);
+//
+// EMPTY builder, deliberately: Host.CreateApplicationBuilder wires appsettings.json providers
+// with reload-on-change FILE WATCHERS rooted at the process's working directory — and MCP
+// clients spawn this exe with THEIR cwd (Cursor: the user's folder). Measured live via ETW:
+// that watcher stat-ed every file that changed near the cwd, which both wasted IO and made
+// StepWind.Mcp look like it was touching files it never touched (it poisoned the timeline's
+// process attribution before the attribution rules also learned to ignore observers). A stdio
+// server needs no config files, so it gets a builder that watches nothing.
+var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings { Args = args });
 
 // CRITICAL for stdio MCP servers: stdout carries ONLY the JSON-RPC protocol stream. Any stray
 // text there (a stray Console.WriteLine, or default console logging) corrupts every message

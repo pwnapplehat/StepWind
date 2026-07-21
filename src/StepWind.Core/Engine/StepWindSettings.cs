@@ -55,6 +55,18 @@ public sealed class StepWindSettings
 
     private static string SettingsPath => Path.Combine(DefaultRoot, "settings.json");
 
+    /// <summary>
+    /// The file this instance was loaded from and saves back to. ONLY <see cref="Load"/> binds
+    /// it (to the real %ProgramData% file). A directly-constructed instance — unit tests build
+    /// hundreds of them — is UNBOUND and <see cref="Save"/> is a no-op for it. This is not a
+    /// nicety: StepWindHost calls Save() whenever settings are applied over IPC, and before
+    /// this guard existed every test that exercised SetSettings OVERWROTE THE REAL MACHINE'S
+    /// production settings.json with its temp fixture (temp folders, temp store, recorder
+    /// off). The damage stayed invisible until the next service restart loaded it.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? BoundPath { get; set; }
+
     public static StepWindSettings Load()
     {
         try
@@ -64,6 +76,7 @@ public sealed class StepWindSettings
                 StepWindSettings? s = JsonSerializer.Deserialize<StepWindSettings>(File.ReadAllText(SettingsPath));
                 if (s is not null)
                 {
+                    s.BoundPath = SettingsPath;
                     return s;
                 }
             }
@@ -73,17 +86,24 @@ public sealed class StepWindSettings
             // fall through to defaults
         }
 
-        return CreateDefault();
+        StepWindSettings fresh = CreateDefault();
+        fresh.BoundPath = SettingsPath; // a real Load() is the production service — bind it
+        return fresh;
     }
 
     public void Save()
     {
+        if (BoundPath is null)
+        {
+            return; // unbound (test fixture / ad-hoc instance): persisting would be a bug
+        }
+
         try
         {
-            Directory.CreateDirectory(DefaultRoot);
-            string tmp = SettingsPath + ".tmp";
+            Directory.CreateDirectory(Path.GetDirectoryName(BoundPath)!);
+            string tmp = BoundPath + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
-            File.Move(tmp, SettingsPath, overwrite: true);
+            File.Move(tmp, BoundPath, overwrite: true);
         }
         catch
         {

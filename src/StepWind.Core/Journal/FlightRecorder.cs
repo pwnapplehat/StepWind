@@ -129,7 +129,40 @@ public sealed class FlightRecorder : IDisposable
 
         _cursors[volume] = new Cursor(journalId, nextUsn);
         SaveCursors();
+        ReattributeFresh();
     }
+
+    /// <summary>
+    /// Second (and third…) chance for blank attributions. ETW real-time delivery lags the USN
+    /// journal by a buffer flush (~1–3 s), while ops are attributed at the first poll after
+    /// they happen — so the authored event for a fresh operation often hasn't ARRIVED yet at
+    /// attribution time (measured live: the same process deleting the same file was named on
+    /// one occurrence and blank on the next, purely by poll timing). Each poll re-runs
+    /// attribution for still-blank ops younger than <see cref="ReattributeWindow"/>; the
+    /// per-op time window itself is unchanged, so this closes the delivery race without ever
+    /// widening what may match.
+    /// </summary>
+    private void ReattributeFresh()
+    {
+        DateTime cutoff = DateTime.UtcNow - ReattributeWindow;
+        lock (_recentLock)
+        {
+            for (LinkedListNode<FileOperation>? node = _recent.First; node is not null; node = node.Next)
+            {
+                if (node.Value.TimestampUtc < cutoff)
+                {
+                    break; // newest-first: everything past here is too old to retry
+                }
+
+                if (node.Value.ByProcess is null && AttributeOp(node.Value) is { } who)
+                {
+                    node.Value = node.Value with { ByProcess = who };
+                }
+            }
+        }
+    }
+
+    private static readonly TimeSpan ReattributeWindow = TimeSpan.FromSeconds(12);
 
     /// <summary>
     /// Filters out operations the user doesn't care about: StepWind's own store/state churn,
@@ -195,8 +228,11 @@ public sealed class FlightRecorder : IDisposable
 
     private string? AttributeOp(FileOperation op)
     {
+        // Deletes key on OldPath (NewPath is null); everything else on the resulting path.
+        // Both the delete-disposition and the POSIX marker-rename ETW events carry the
+        // file's ORIGINAL path, so the lookup key lines up for every operation kind.
         string? path = op.NewPath ?? op.OldPath;
-        return path is null ? null : _attribution.AttributeByPath(path, TimeSpan.FromSeconds(15));
+        return path is null ? null : _attribution.Attribute(path, op.TimestampUtc, op.Kind);
     }
 
     private void Add(FileOperation op)
