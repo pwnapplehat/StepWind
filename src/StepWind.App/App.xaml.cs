@@ -1,5 +1,4 @@
 ﻿using System.Windows;
-using System.Windows.Threading;
 
 namespace StepWind.App;
 
@@ -22,10 +21,6 @@ public partial class App : Application
                 "StepWind", MessageBoxButton.OK, MessageBoxImage.Error);
             args.Handled = true;
         };
-
-        Wpf.Ui.Appearance.ApplicationAccentColorManager.Apply(
-            System.Windows.Media.Color.FromRgb(0x63, 0x66, 0xF1),
-            Wpf.Ui.Appearance.ApplicationTheme.Dark);
 
         base.OnStartup(e);
 

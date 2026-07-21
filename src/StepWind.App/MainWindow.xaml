@@ -1,25 +1,22 @@
-﻿<ui:FluentWindow x:Class="StepWind.App.MainWindow"
-                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
-                 xmlns:tb="http://www.hardcodet.net/taskbar"
-                 xmlns:views="clr-namespace:StepWind.App.Views"
-                 Title="StepWind" Width="1120" Height="720"
-                 MinWidth="880" MinHeight="560"
-                 WindowStartupLocation="CenterScreen"
-                 WindowCornerPreference="Round"
-                 ExtendsContentIntoTitleBar="True" WindowBackdropType="None"
-                 Background="{StaticResource SW.Bg}"
-                 FontFamily="{StaticResource SW.Font.Text}"
-                 Foreground="{StaticResource SW.Text}"
-                 Closing="OnClosing">
+﻿<Window x:Class="StepWind.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:tb="http://www.hardcodet.net/taskbar"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="StepWind" Width="1280" Height="800"
+        MinWidth="960" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Background="#07090D"
+        Closing="OnClosing">
+  <!-- Chromeless: the web layer draws ALL chrome. app-region CSS (via WebView2's
+       IsNonClientRegionSupportEnabled) provides native drag / snap layouts / double-click
+       maximize / system menu; the host keeps a 6px resize strip around the WebView. -->
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0"
+                  CornerRadius="0" UseAeroCaptionButtons="False"/>
+  </WindowChrome.WindowChrome>
 
   <Grid>
-    <Grid.ColumnDefinitions>
-      <ColumnDefinition Width="212"/>
-      <ColumnDefinition Width="*"/>
-    </Grid.ColumnDefinitions>
-
     <tb:TaskbarIcon x:Name="Tray" ToolTipText="StepWind — an undo button for your PC"
                     TrayMouseDoubleClick="OnTrayOpen">
       <tb:TaskbarIcon.ContextMenu>
@@ -32,140 +29,6 @@
       </tb:TaskbarIcon.ContextMenu>
     </tb:TaskbarIcon>
 
-    <!-- ═══════════ Left rail: brand, navigation, live status ═══════════ -->
-    <Border Grid.Column="0" Background="{StaticResource SW.Rail}"
-            BorderBrush="{StaticResource SW.StrokeSoft}" BorderThickness="0,0,1,0">
-      <DockPanel>
-
-        <!-- Brand block (also a drag region — it sits under the title bar's left edge). -->
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="20,18,0,22">
-          <Border Width="34" Height="34" CornerRadius="9">
-            <Image Source="pack://application:,,,/Assets/icon.png" Width="34" Height="34"
-                   RenderOptions.BitmapScalingMode="HighQuality"/>
-          </Border>
-          <StackPanel VerticalAlignment="Center" Margin="11,0,0,0">
-            <TextBlock Text="StepWind" FontFamily="{StaticResource SW.Font}" FontSize="16"
-                       FontWeight="SemiBold" Foreground="{StaticResource SW.Text}"/>
-            <TextBlock Text="undo for your PC" FontSize="10.5"
-                       Foreground="{StaticResource SW.Text3}" Margin="0,1,0,0"/>
-          </StackPanel>
-        </StackPanel>
-
-        <!-- Live status footer -->
-        <Border DockPanel.Dock="Bottom" Margin="14,0,14,16" CornerRadius="10" Padding="12,10"
-                Background="{StaticResource SW.Inset}"
-                BorderBrush="{StaticResource SW.StrokeSoft}" BorderThickness="1">
-          <StackPanel>
-            <StackPanel Orientation="Horizontal">
-              <Ellipse Width="8" Height="8" VerticalAlignment="Center">
-                <Ellipse.Style>
-                  <Style TargetType="Ellipse">
-                    <Setter Property="Fill" Value="{StaticResource SW.Danger}"/>
-                    <Style.Triggers>
-                      <DataTrigger Binding="{Binding ServiceUp}" Value="True">
-                        <Setter Property="Fill" Value="{StaticResource SW.Ok}"/>
-                        <!-- Living "protection active" heartbeat while the service is up. -->
-                        <DataTrigger.EnterActions>
-                          <BeginStoryboard Name="Pulse" Storyboard="{StaticResource StatusPulse}"/>
-                        </DataTrigger.EnterActions>
-                        <DataTrigger.ExitActions>
-                          <StopStoryboard BeginStoryboardName="Pulse"/>
-                        </DataTrigger.ExitActions>
-                      </DataTrigger>
-                    </Style.Triggers>
-                  </Style>
-                </Ellipse.Style>
-              </Ellipse>
-              <TextBlock FontSize="11.5" FontWeight="SemiBold" Margin="7,0,0,0"
-                         Foreground="{StaticResource SW.Text}">
-                <TextBlock.Style>
-                  <Style TargetType="TextBlock">
-                    <Setter Property="Text" Value="Not protecting"/>
-                    <Style.Triggers>
-                      <DataTrigger Binding="{Binding ServiceUp}" Value="True">
-                        <Setter Property="Text" Value="Protection active"/>
-                      </DataTrigger>
-                    </Style.Triggers>
-                  </Style>
-                </TextBlock.Style>
-              </TextBlock>
-            </StackPanel>
-            <TextBlock Text="{Binding Status}" FontSize="10.5" Margin="0,4,0,0"
-                       Foreground="{StaticResource SW.Text3}" TextWrapping="Wrap"/>
-          </StackPanel>
-        </Border>
-
-        <!-- Navigation -->
-        <StackPanel>
-          <TextBlock Text="Protection" Style="{StaticResource SW.SectionLabel}" Margin="24,2,0,6"/>
-          <!-- Checked (not Click) so programmatic selection — UI automation, screen readers,
-               the tray's "Oh no" — navigates exactly like a mouse click. AutomationProperties
-               names are required: the content is a panel, so UIA sees no name otherwise. -->
-          <RadioButton x:Name="NavTimeline" Style="{StaticResource SW.NavItem}" IsChecked="True"
-                       Checked="OnNav" Tag="timeline" GroupName="Nav"
-                       AutomationProperties.Name="Timeline">
-            <StackPanel Orientation="Horizontal">
-              <ui:SymbolIcon Symbol="History24" FontSize="17"/>
-              <TextBlock Text="Timeline" Margin="10,0,0,0" VerticalAlignment="Center"/>
-            </StackPanel>
-          </RadioButton>
-          <RadioButton x:Name="NavFiles" Style="{StaticResource SW.NavItem}"
-                       Checked="OnNav" Tag="files" GroupName="Nav"
-                       AutomationProperties.Name="File versions">
-            <StackPanel Orientation="Horizontal">
-              <ui:SymbolIcon Symbol="DocumentCopy24" FontSize="17"/>
-              <TextBlock Text="File versions" Margin="10,0,0,0" VerticalAlignment="Center"/>
-            </StackPanel>
-          </RadioButton>
-          <RadioButton x:Name="NavFolders" Style="{StaticResource SW.NavItem}"
-                       Checked="OnNav" Tag="folders" GroupName="Nav"
-                       AutomationProperties.Name="Protected folders">
-            <StackPanel Orientation="Horizontal">
-              <ui:SymbolIcon Symbol="ShieldCheckmark24" FontSize="17"/>
-              <TextBlock Text="Protected folders" Margin="10,0,0,0" VerticalAlignment="Center"/>
-            </StackPanel>
-          </RadioButton>
-
-          <TextBlock Text="Integrations" Style="{StaticResource SW.SectionLabel}" Margin="24,18,0,6"/>
-          <RadioButton x:Name="NavAgents" Style="{StaticResource SW.NavItem}"
-                       Checked="OnNav" Tag="ai" GroupName="Nav"
-                       AutomationProperties.Name="AI agents">
-            <StackPanel Orientation="Horizontal">
-              <ui:SymbolIcon Symbol="Bot24" FontSize="17"/>
-              <TextBlock Text="AI agents" Margin="10,0,0,0" VerticalAlignment="Center"/>
-            </StackPanel>
-          </RadioButton>
-
-          <TextBlock Text="App" Style="{StaticResource SW.SectionLabel}" Margin="24,18,0,6"/>
-          <RadioButton x:Name="NavSettings" Style="{StaticResource SW.NavItem}"
-                       Checked="OnNav" Tag="settings" GroupName="Nav"
-                       AutomationProperties.Name="Settings">
-            <StackPanel Orientation="Horizontal">
-              <ui:SymbolIcon Symbol="Settings24" FontSize="17"/>
-              <TextBlock Text="Settings" Margin="10,0,0,0" VerticalAlignment="Center"/>
-            </StackPanel>
-          </RadioButton>
-        </StackPanel>
-      </DockPanel>
-    </Border>
-
-    <!-- ═══════════ Content area ═══════════ -->
-    <Grid Grid.Column="1">
-      <Grid.RowDefinitions>
-        <RowDefinition Height="44"/>
-        <RowDefinition Height="*"/>
-      </Grid.RowDefinitions>
-
-      <!-- Custom chrome strip: drag region + caption buttons (snap layouts keep working). -->
-      <ui:TitleBar Grid.Row="0" Background="Transparent" ShowMaximize="True" ShowMinimize="True"/>
-
-      <Grid Grid.Row="1">
-        <views:TimelineView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=timeline}"/>
-        <views:FilesView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=files}"/>
-        <views:FoldersView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=folders}"/>
-        <views:AiAgentsView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=ai}"/>
-        <views:SettingsView Visibility="{Binding CurrentView, Converter={StaticResource ViewVis}, ConverterParameter=settings}"/>
-      </Grid>
-    </Grid>
+    <wv2:WebView2 x:Name="Web" DefaultBackgroundColor="#07090D"/>
   </Grid>
-</ui:FluentWindow>
+</Window>

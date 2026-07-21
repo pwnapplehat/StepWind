@@ -95,25 +95,26 @@ looks wrong. Disconnecting removes exactly our entry and nothing else.
 
 ## A UI designed for the job
 
-StepWind has its own visual identity — an opaque deep-slate design with a navigation rail,
-built around the product's core idea: a **time river**. Operations flow down the timeline
-grouped by day, each with a color-coded rail (create / change / move / rename / delete),
-monospaced clock time, the app that did it, and an Undo button right on the row. Filter
-chips narrow the river to just deletes or just moves; the File versions page pairs a
-searchable recently-changed list with full version history and one-click restore. Custom
-visual layer, standard accessible control plumbing underneath — keyboard navigation and
-screen readers keep working.
+StepWind's interface is **web-rendered inside WebView2** — the same architecture the most
+polished desktop apps use (VS Code, Discord, Linear, 1Password), without shipping Chromium:
+Windows' built-in Evergreen WebView2 runtime does the rendering, so the installer stays
+lean and every pixel is drawn by an auditable, dependency-free web layer that ships as
+plain files beside the exe. The thin .NET host owns only what the web platform can't: the
+chromeless window, the tray icon, the global panic hotkey, and an **allow-listed JSON
+bridge** to the service (the web layer can only call what's explicitly listed, and settings
+patches only carry explicitly allowed keys).
 
-**File versions is a folder browser.** Open a protected folder, drill into subfolders via
-breadcrumbs (built for deep dev trees, not a flat list), and restore any version of the file
-you pick. Each folder shows the files/versions beneath it; a search box does a fast recursive
-find. Scrolling is smooth and animated throughout.
-
-It's motion-polished, tastefully: views fade-and-rise on switch, rows cascade in, the active
-nav indicator grows into place, buttons and cards answer with smooth colour fades, a subtle
-press-scale and hover-lift, dialogs scale in, and the "protection active" dot has a gentle
-heartbeat — all opacity/transform only (render-thread composited), so it's fluid without
-taxing the machine.
+The design itself is a premium deep-slate identity built around the product's core idea: a
+**time river**. Operations flow down the timeline grouped by day, each with a color-coded
+rail (create / change / move / rename / delete), monospaced clock time, the app that did
+it, and an Undo button on hover. Filter chips narrow the river; a scope toggle limits it to
+protected folders. **File versions is a folder browser** with breadcrumbs and recursive
+search, paired with full version history and — because the web stack is genuinely better at
+this — an **inline unified diff viewer**: click any version to see exactly what changed
+against the file on disk now (or the version's own content if the file is gone). A **command
+palette (Ctrl+K)** searches every command and every file in the version store. Views
+fade-and-rise, rows cascade in, the nav indicator glides, dialogs scale in, and the
+"protection active" dot has a gentle heartbeat.
 
 | File versions (folder browser) | AI agents | Protected folders | Settings |
 |---|---|---|---|
@@ -127,7 +128,8 @@ src/StepWind.Core/     engine: FastCDC chunker, content-addressed store (+AES-GC
                        reversal, ETW attribution, flight recorder, watch engine, IPC,
                        unified-diff engine, MCP client auto-configurator
 src/StepWind.Service/  elevated Windows service: hosts the engine + named-pipe API
-src/StepWind.App/      unelevated WPF tray app: timeline + version history + undo/restore
+src/StepWind.App/      unelevated tray app: chromeless WebView2 host + allow-listed JSON
+                       bridge; the UI itself is ./web (dependency-free HTML/CSS/JS)
 src/StepWind.Mcp/      MCP server for AI agents (stdio): checkpoint / diff / restore
 src/StepWind.Cli/      diagnostics + real-hardware E2E harness
 tests/                 deterministic Core tests

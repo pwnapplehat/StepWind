@@ -12,12 +12,17 @@
 
   <ItemGroup>
     <ProjectReference Include="..\StepWind.Core\StepWind.Core.csproj" />
-    <PackageReference Include="WPF-UI" Version="4.3.0" />
+    <!-- The UI is web-rendered (./web) inside WebView2 — the architecture Discord, Linear,
+         1Password, and VS Code use, minus shipping Chromium (the Evergreen runtime is part
+         of Windows). WPF remains only as the thin chromeless host window + tray plumbing. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3967.48" />
     <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
   </ItemGroup>
 
-  <ItemGroup Condition="Exists('..\..\assets\icon.png')">
-    <Resource Include="..\..\assets\icon.png" Link="Assets\icon.png" />
+  <ItemGroup>
+    <!-- The web front end ships as loose files beside the exe; WebView2 serves them over a
+         virtual host. CopyToPublishDirectory keeps them intact through single-file publish. -->
+    <Content Include="web\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

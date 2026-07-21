@@ -49,7 +49,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; The whole self-contained publish output (service + GUI + CLI + MCP server + runtime).
+; The whole self-contained publish output (service + GUI + CLI + MCP server + runtime + web UI).
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; SPACELESS copy of the MCP server. Several MCP clients (Cursor included -- verified from its
@@ -58,6 +58,10 @@ Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; inherits Users read+execute (only the store\ subdir is ACL-hardened), so every user's AI
 ; tool can run it. The app writes THIS path into AI tools' MCP configs.
 Source: "{#DistDir}\StepWind.Mcp.exe"; DestDir: "{commonappdata}\StepWind\bin"; Flags: ignoreversion
+; WebView2 Evergreen bootstrapper (Microsoft-signed, ~1.7 MB): the GUI renders in WebView2.
+; Win11 and current Win10 ship the runtime; this covers older Win10/LTSC where it's absent.
+; Extracted to {tmp} and run ONLY when the runtime registry key is missing (see [Run]).
+Source: "redist\MicrosoftEdgeWebView2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\StepWind.exe"
@@ -89,7 +93,30 @@ begin
   end;
 end;
 
+// The GUI renders in WebView2. Win11 + current Win10 already have the Evergreen runtime;
+// this returns true only where it's genuinely absent (old Win10/LTSC), so the bundled
+// Microsoft bootstrapper runs just for them (checks both per-machine locations, x64+x86).
+function WebView2RuntimeMissing: Boolean;
+var
+  Version: string;
+begin
+  Result := not (
+    RegQueryStringValue(HKLM,
+      'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+      'pv', Version) or
+    RegQueryStringValue(HKLM,
+      'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}',
+      'pv', Version));
+  if not Result then
+    Result := (Version = '') or (Version = '0.0.0.0');
+end;
+
 [Run]
+; Ensure the WebView2 runtime exists before anything launches the GUI (silent, ~2 MB download
+; via Microsoft's own bootstrapper; skipped entirely on machines that already have it).
+Filename: "{tmp}\MicrosoftEdgeWebView2Setup.exe"; Parameters: "/silent /install"; \
+  Flags: runhidden waituntilterminated; StatusMsg: "Installing Microsoft WebView2 runtime..."; \
+  Check: WebView2RuntimeMissing
 ; Register + start the background service (its verb does stop/delete/create/start).
 Filename: "{app}\StepWind.Service.exe"; Parameters: "install-service"; Flags: runhidden waituntilterminated; StatusMsg: "Installing StepWind protection service..."
 ; Launch the tray app now (as the invoking user, unelevated where possible).

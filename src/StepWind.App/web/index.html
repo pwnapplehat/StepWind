@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="color-scheme" content="dark"/>
+<title>StepWind</title>
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<div id="ambient"></div>
+
+<div id="frame">
+  <!-- ═══════════ Sidebar ═══════════ -->
+  <aside id="side">
+    <div id="brand" class="drag">
+      <div class="brand-mark no-drag" title="StepWind">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
+          <defs><linearGradient id="bg1" x1="0" y1="0" x2="24" y2="24">
+            <stop offset="0" stop-color="#6366F1"/><stop offset="1" stop-color="#22D3EE"/>
+          </linearGradient></defs>
+          <path d="M12 3a9 9 0 1 1-8.6 6.3" stroke="url(#bg1)" stroke-width="2.6"
+                stroke-linecap="round"/>
+          <path d="M2.6 4.4l.9 5 5-.9" stroke="url(#bg1)" stroke-width="2.6"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-name">StepWind</div>
+        <div class="brand-sub">undo for your PC</div>
+      </div>
+    </div>
+
+    <nav id="nav">
+      <div class="nav-label">Protection</div>
+      <button class="nav-item active" data-view="timeline">
+        <svg viewBox="0 0 24 24"><path d="M12 8v4l2.6 2.6M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.7L21 8M21 3v5h-5"/></svg>
+        Timeline
+      </button>
+      <button class="nav-item" data-view="files">
+        <svg viewBox="0 0 24 24"><path d="M14 3v5h5M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5ZM9 13h6M9 17h6"/></svg>
+        File versions
+      </button>
+      <button class="nav-item" data-view="folders">
+        <svg viewBox="0 0 24 24"><path d="M12 22s8-3.4 8-10V5.5L12 2 4 5.5V12c0 6.6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
+        Protected folders
+      </button>
+
+      <div class="nav-label">Integrations</div>
+      <button class="nav-item" data-view="agents">
+        <svg viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M8 4h8M9 14h.01M15 14h.01M9.5 17h5"/></svg>
+        AI agents
+      </button>
+
+      <div class="nav-label">App</div>
+      <button class="nav-item" data-view="settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z"/></svg>
+        Settings
+      </button>
+      <div id="nav-pill"></div>
+    </nav>
+
+    <button id="palette-hint" title="Command palette">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <span>Search &amp; commands</span>
+      <kbd>Ctrl K</kbd>
+    </button>
+
+    <div id="status-card">
+      <div class="status-row">
+        <span id="status-dot" class="dot bad"></span>
+        <span id="status-title">Connecting…</span>
+      </div>
+      <div id="status-sub">Looking for the StepWind service</div>
+    </div>
+  </aside>
+
+  <!-- ═══════════ Main ═══════════ -->
+  <main id="main">
+    <header id="topbar" class="drag">
+      <div id="crumbs" class="no-drag"></div>
+      <div id="win-controls" class="no-drag">
+        <button id="win-min" title="Minimize"><svg viewBox="0 0 12 12"><path d="M2 6h8"/></svg></button>
+        <button id="win-max" title="Maximize"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1"/></svg></button>
+        <button id="win-close" title="Close"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
+      </div>
+    </header>
+
+    <div id="views">
+      <section id="view-timeline" class="view active"></section>
+      <section id="view-files" class="view"></section>
+      <section id="view-folders" class="view"></section>
+      <section id="view-agents" class="view"></section>
+      <section id="view-settings" class="view"></section>
+    </div>
+  </main>
+</div>
+
+<!-- Command palette -->
+<div id="palette" class="hidden">
+  <div id="palette-panel">
+    <input id="palette-input" type="text" placeholder="Type a command or search…" spellcheck="false"/>
+    <div id="palette-list"></div>
+  </div>
+</div>
+
+<div id="dialog-host"></div>
+<div id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

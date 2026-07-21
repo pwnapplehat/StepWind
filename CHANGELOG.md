@@ -6,6 +6,25 @@ All notable changes to StepWind are documented here.
 
 Initial release — an undo button for your whole PC (and a safety net for AI coding agents).
 
+- **Web-rendered UI (WebView2):** the interface is drawn by a dependency-free web layer
+  (plain HTML/CSS/JS shipped beside the exe) inside Windows' built-in WebView2 runtime — the
+  architecture of VS Code/Discord/Linear/1Password without shipping Chromium. A thin .NET
+  host owns the chromeless window (native drag/snap/double-click-maximize via `app-region`),
+  tray icon, global hotkey, and an **allow-listed JSON bridge** to the service: the web
+  layer can only invoke what's explicitly listed, settings patches only carry explicitly
+  allowed keys, and the browser can only open StepWind's own two URLs. New capabilities the
+  web stack made practical: an inline **unified diff viewer** in File versions (click any
+  version to see exactly what changed vs. the file on disk now, falling back to the
+  version's own content when the live file is gone), a **command palette (Ctrl+K)** that
+  searches commands and every file in the version store, live 3-second refresh that never
+  steals scroll position (fingerprinted renders), and a full in-app dialog system (notice /
+  danger-confirm / keep-or-delete choices). The installer bundles Microsoft's signed
+  WebView2 Evergreen bootstrapper and runs it only on machines missing the runtime (older
+  Win10/LTSC); everything else already has it. Verified by a DEBUG-only in-app E2E runner
+  that drives the real DOM against the real service — folder add/capture/diff/remove-with-
+  history-delete, settings round-trips, timeline Undo moving a real folder back — plus the
+  full unit suite.
+
 - **A safety net for AI coding agents — MCP server + AI agents tab:** StepWind ships an MCP
   server (`StepWind.Mcp.exe`) that gives agents like Cursor and Claude a time machine, not a
   shredder. Ten tools: status, timeline, protected folders, browse, file history, read

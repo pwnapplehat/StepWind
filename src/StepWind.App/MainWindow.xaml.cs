@@ -1,13 +1,19 @@
 ﻿using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
-using StepWind.App.ViewModels;
-using Wpf.Ui.Controls;
+using Microsoft.Web.WebView2.Core;
 
 namespace StepWind.App;
 
-public partial class MainWindow : FluentWindow
+/// <summary>
+/// The chromeless host window. Everything visible is rendered by the web layer (./web served
+/// over a virtual host inside WebView2); this class owns only what the web platform can't:
+/// the window itself, the tray icon, the global panic hotkey, and the <see cref="Bridge"/>
+/// that connects the web UI to the elevated service's named pipe.
+/// </summary>
+public partial class MainWindow : Window
 {
     // Global "oh no" hotkey: Ctrl+Shift+Z brings StepWind up from anywhere the instant you
     // realize something went wrong — no hunting for the tray icon mid-panic.
@@ -15,16 +21,103 @@ public partial class MainWindow : FluentWindow
     private const uint ModControl = 0x0002, ModShift = 0x0004, ModNoRepeat = 0x4000;
     private const uint VkZ = 0x5A;
 
-    private readonly MainViewModel _viewModel = new();
+    private readonly Bridge _bridge;
     private bool _reallyExit;
     private bool _hotkeyRegistered;
 
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = _viewModel;
+        _bridge = new Bridge(this);
         Tray.Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+        Loaded += async (_, _) => await InitWebAsync();
+        StateChanged += (_, _) => OnHostStateChanged();
     }
+
+    private async Task InitWebAsync()
+    {
+        if (Web.CoreWebView2 is not null)
+        {
+            return;
+        }
+
+        string dataDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "StepWind", "webview");
+        CoreWebView2Environment env = await CoreWebView2Environment.CreateAsync(null, dataDir);
+        await Web.EnsureCoreWebView2Async(env);
+
+        CoreWebView2Settings s = Web.CoreWebView2!.Settings;
+        s.AreDefaultContextMenusEnabled = false;
+        s.IsStatusBarEnabled = false;
+        s.IsZoomControlEnabled = false;
+#if DEBUG
+        s.AreDevToolsEnabled = true;
+#else
+        s.AreDevToolsEnabled = false;
+#endif
+        // app-region: drag CSS = native title-bar behavior (drag, snap layouts, double-click
+        // maximize, right-click system menu) — what makes chromeless feel native.
+        s.IsNonClientRegionSupportEnabled = true;
+
+        string webDir = Path.Combine(AppContext.BaseDirectory, "web");
+        Web.CoreWebView2.SetVirtualHostNameToFolderMapping(
+            "app.stepwind", webDir, CoreWebView2HostResourceAccessKind.Deny);
+
+        Web.CoreWebView2.WebMessageReceived += (_, e) => _bridge.HandleMessage(e.WebMessageAsJson);
+        Web.CoreWebView2.NavigationCompleted += async (_, _) =>
+        {
+            // Deep links (used by the screenshot/E2E harnesses): --view=files [--autopick]
+            string[] args = Environment.GetCommandLineArgs();
+            string? view = args.FirstOrDefault(a => a.StartsWith("--view=", StringComparison.OrdinalIgnoreCase))?[7..];
+            if (!string.IsNullOrWhiteSpace(view))
+            {
+                await Web.CoreWebView2.ExecuteScriptAsync($"setTimeout(() => navigate('{view}'), 400)");
+            }
+            if (args.Contains("--autopick", StringComparer.OrdinalIgnoreCase))
+            {
+                await Web.CoreWebView2.ExecuteScriptAsync(
+                    "setTimeout(() => { document.querySelector('.f-row')?.click(); " +
+                    "setTimeout(() => { document.querySelector('.f-row:not(:has(.f-ico.folder))')?.click(); " +
+                    "setTimeout(() => document.querySelector('.v-row')?.click(), 900); }, 900); }, 1600)");
+            }
+#if DEBUG
+            await RunE2EIfRequestedAsync(args);
+#endif
+        };
+        Web.CoreWebView2.Navigate("https://app.stepwind/index.html");
+        OnHostStateChanged();
+
+        // First-run seeding runs from the host (it must happen even if the user never opens
+        // a particular view): the SYSTEM service can't see the user's real folders, so the
+        // GUI supplies Documents/Desktop/Pictures exactly once, and never again after any
+        // human folder decision (FirstRunCompleted).
+        _ = _bridge.SeedDefaultFoldersOnFirstRunAsync();
+    }
+
+    /// <summary>Keeps a resize strip when windowed; edge-to-edge when maximized.</summary>
+    private void OnHostStateChanged()
+    {
+        Web.Margin = new Thickness(WindowState == WindowState.Maximized ? 0 : 6);
+        _bridge.NotifyWindowState(WindowState == WindowState.Maximized);
+    }
+
+    /// <summary>Posts a JSON string to the web layer (bridge replies + host events).</summary>
+    internal void PostToWeb(string json) =>
+        Dispatcher.Invoke(() => Web.CoreWebView2?.PostWebMessageAsJson(json));
+
+    internal void RunOnUi(Action action) => Dispatcher.Invoke(action);
+
+    // ─────────────────────────── window verbs (from the web chrome) ───────────────────────────
+
+    internal void WebMinimize() => WindowState = WindowState.Minimized;
+
+    internal void WebMaximizeRestore() =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    internal void WebClose() => Close();
+
+    // ─────────────────────────── tray + hotkey (unchanged behavior) ───────────────────────────
 
     protected override void OnSourceInitialized(EventArgs e)
     {
@@ -59,28 +152,25 @@ public partial class MainWindow : FluentWindow
         const int WmHotkey = 0x0312;
         if (msg == WmHotkey && wParam.ToInt32() == HotkeyId)
         {
-            ShowFromTray();
+            ShowFromTray(navigateTimeline: true);
             handled = true;
         }
 
         return IntPtr.Zero;
     }
 
-    private void ShowFromTray()
+    private async void ShowFromTray(bool navigateTimeline = false)
     {
         Show();
         WindowState = WindowState.Normal;
         Activate();
         Topmost = true;
         Topmost = false; // bounce to the foreground without staying pinned
-    }
 
-    /// <summary>Rail navigation: each item's Tag names the view it shows.</summary>
-    private void OnNav(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: string view })
+        await InitWebAsync(); // first Show after a --minimized start initializes the web layer
+        if (navigateTimeline && Web.CoreWebView2 is not null)
         {
-            _viewModel.CurrentView = view;
+            await Web.CoreWebView2.ExecuteScriptAsync("typeof navigate==='function' && navigate('timeline')");
         }
     }
 
@@ -95,13 +185,7 @@ public partial class MainWindow : FluentWindow
 
     private void OnTrayOpen(object sender, RoutedEventArgs e) => ShowFromTray();
 
-    private async void OnOhNo(object sender, RoutedEventArgs e)
-    {
-        ShowFromTray();
-        NavTimeline.IsChecked = true;
-        _viewModel.CurrentView = "timeline";
-        await _viewModel.RefreshAsync();
-    }
+    private void OnOhNo(object sender, RoutedEventArgs e) => ShowFromTray(navigateTimeline: true);
 
     private void OnTrayExit(object sender, RoutedEventArgs e)
     {
@@ -113,6 +197,6 @@ public partial class MainWindow : FluentWindow
 
         Tray.Dispose();
         Close();
-        System.Windows.Application.Current.Shutdown();
+        Application.Current.Shutdown();
     }
 }
