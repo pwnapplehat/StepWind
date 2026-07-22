@@ -46,3 +46,7 @@ installer/Output/
 shot.png
 installer/Output/
 release/
+
+# Local Orchestra (multi-model audit) config — dev tooling, not product
+orchestra.config.json
+.orchestra/
