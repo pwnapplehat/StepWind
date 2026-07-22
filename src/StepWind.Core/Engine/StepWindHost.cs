@@ -30,6 +30,7 @@ public sealed class StepWindHost : IDisposable
     private StorageGuard _storage;
     private volatile bool _reEncoding;
     private volatile StorageState _storageState = new(false, null, -1, 0, 0, 0);
+    private volatile Updates.PendingUpdate? _pendingUpdate;
     private WatchEngine _watch;
 
     public StepWindHost(StepWindSettings settings, IBlobCodec codec, Action<string>? log = null)
@@ -88,6 +89,12 @@ public sealed class StepWindHost : IDisposable
         _storageTimer = new System.Threading.Timer(_ => MonitorStorage(), null,
             TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
+
+    /// <summary>
+    /// Records a verified-but-unsigned update the service has staged, so the GUI can offer a
+    /// one-click install (with normal UAC). Called by the service's update loop.
+    /// </summary>
+    public void SetPendingUpdate(Updates.PendingUpdate? update) => _pendingUpdate = update;
 
     /// <summary>Recomputes the storage pause state from current free space + store size.</summary>
     private void RefreshStorageState()
@@ -296,6 +303,7 @@ public sealed class StepWindHost : IDisposable
         EngineStatus s = _watch.Status;
         List<string> folders = AccessibleFolders(caller);
         StorageState storage = _storageState;
+        Updates.PendingUpdate? update = _pendingUpdate;
         return new
         {
             FlightRecorder = _flightRecorder is not null,
@@ -309,6 +317,8 @@ public sealed class StepWindHost : IDisposable
             CapturePaused = storage.Paused,
             PauseReason = storage.Reason,
             FreeDiskBytes = storage.FreeBytes,
+            UpdateReadyVersion = update?.Version,
+            UpdateReadyPath = update?.SetupPath,
             WatchedFolders = folders,
         };
     }

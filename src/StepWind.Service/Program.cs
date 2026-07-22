@@ -111,7 +111,10 @@ public sealed class StepWindWorker : BackgroundService
     /// </summary>
     private async Task RunUpdateLoopAsync(StepWindSettings settings, CancellationToken ct)
     {
-        var updater = new UpdateService(msg => _logger.LogInformation("[update] {Message}", msg));
+        var updater = new UpdateService(
+            msg => _logger.LogInformation("[update] {Message}", msg),
+            StepWindSettings.DefaultUpdatesDir,
+            info => _host?.SetPendingUpdate(info));
         try
         {
             await Task.Delay(TimeSpan.FromMinutes(2), ct);

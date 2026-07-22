@@ -95,6 +95,9 @@ public sealed class Bridge(MainWindow window)
         "agentDisconnect" => await AgentActionAsync(Require(p, "id"), connect: false),
         "mcpInfo" => McpInfo(),
 
+        // ── host: updates ──
+        "installUpdate" => InstallUpdate(Require(p, "path")),
+
         // ── host: shell helpers ──
         "pickFolder" => PickFolder(p?["title"]?.GetValue<string>()),
         "pickFile" => PickFile(),
@@ -265,6 +268,28 @@ public sealed class Bridge(MainWindow window)
                 case "close": window.WebClose(); break;
             }
         });
+        return null;
+    }
+
+    /// <summary>
+    /// Launches a verified, service-staged update installer. The GUI is unelevated, so starting
+    /// the (admin-manifested) setup triggers a normal UAC prompt the user consents to — this is
+    /// the FREE path that gives auto-update without silently running an unsigned binary as SYSTEM.
+    /// The path is validated to live inside StepWind's ACL-locked staging dir, so the web layer
+    /// can only ever launch what the service put there.
+    /// </summary>
+    private JsonNode? InstallUpdate(string path)
+    {
+        string stagingDir = System.IO.Path.GetFullPath(StepWindSettings.DefaultUpdatesDir);
+        string full = System.IO.Path.GetFullPath(path);
+        bool inStaging = full.StartsWith(stagingDir + System.IO.Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        if (!inStaging || !full.EndsWith("-setup.exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
+        {
+            throw new InvalidOperationException("That update installer isn't a staged StepWind setup.");
+        }
+
+        // UseShellExecute lets Windows apply the installer's admin manifest → UAC prompt.
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(full) { UseShellExecute = true });
         return null;
     }
 

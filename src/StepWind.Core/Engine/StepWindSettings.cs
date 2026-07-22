@@ -74,6 +74,9 @@ public sealed class StepWindSettings
 
     public static string DefaultStoreRoot => Path.Combine(DefaultRoot, "store");
 
+    /// <summary>Where verified update installers are staged for one-click install. Users-readable.</summary>
+    public static string DefaultUpdatesDir => Path.Combine(DefaultRoot, "updates");
+
     private static string SettingsPath => Path.Combine(DefaultRoot, "settings.json");
 
     /// <summary>

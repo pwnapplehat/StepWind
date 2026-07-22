@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Reflection;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
+using StepWind.Core.Storage;
 using StepWind.Core.Updates;
 
 namespace StepWind.Service;
@@ -42,10 +43,14 @@ public sealed class UpdateService
 
     private readonly Action<string> _log;
     private readonly HttpClient _http;
+    private readonly string _stagingDir;
+    private readonly Action<PendingUpdate>? _onStaged;
 
-    public UpdateService(Action<string> log)
+    public UpdateService(Action<string> log, string? stagingDir = null, Action<PendingUpdate>? onStaged = null)
     {
         _log = log;
+        _stagingDir = stagingDir ?? Path.Combine(Path.GetTempPath(), "StepWindUpdate");
+        _onStaged = onStaged;
         _http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd($"StepWind/{CurrentVersion.ToString(3)} (+https://github.com/{Owner}/{Repo})");
         _http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
@@ -95,9 +100,8 @@ public sealed class UpdateService
                 return UpdateOutcome.NoChecksums;
             }
 
-            string dir = Path.Combine(Path.GetTempPath(), "StepWindUpdate");
-            Directory.CreateDirectory(dir);
-            string setupPath = Path.Combine(dir, $"StepWind-{latest.ToString(3)}-setup.exe");
+            Directory.CreateDirectory(_stagingDir);
+            string setupPath = Path.Combine(_stagingDir, $"StepWind-{latest.ToString(3)}-setup.exe");
 
             await Download(release.SetupUrl, setupPath, ct);
 
@@ -111,42 +115,59 @@ public sealed class UpdateService
                 return UpdateOutcome.ChecksumMismatch;
             }
 
-            // (4) Authenticode is the real root of trust. A checksum from the same release an
-            // attacker would tamper with proves only integrity, not authenticity.
+            // (4) Is the setup Authenticode-signed by a trusted publisher? A checksum from the
+            // same release an attacker would tamper with proves integrity, not authenticity — so
+            // only a trusted signature earns the SILENT, no-prompt SYSTEM install.
             SignatureTrust trust = Authenticode.VerifyFile(setupPath);
-            if (trust != SignatureTrust.Trusted)
-            {
-                _log($"update ABORTED: setup is not signed by a trusted publisher ({trust}); silent update stays disabled until releases are code-signed");
-                TryDelete(setupPath);
-                return UpdateOutcome.Unsigned;
-            }
+            bool signedOk = UpdatePlanner.ShouldSilentlyInstall(
+                trust,
+                trust == SignatureTrust.Trusted ? Authenticode.SignerThumbprint(setupPath) : null,
+                ExpectedSignerThumbprint);
 
-            if (ExpectedSignerThumbprint.Length > 0)
+            if (signedOk)
             {
-                string? thumb = Authenticode.SignerThumbprint(setupPath);
-                if (!string.Equals(thumb, ExpectedSignerThumbprint, StringComparison.OrdinalIgnoreCase))
+                _log("setup verified (checksum + trusted Authenticode signature); launching silent update");
+                // The installer stops this service, backs up the current install, swaps files, and —
+                // if the new service won't start — restores the backup (see installer/stepwind.iss).
+                Process.Start(new ProcessStartInfo(setupPath, "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES")
                 {
-                    _log($"update ABORTED: setup signer thumbprint '{thumb}' is not StepWind's pinned certificate");
-                    TryDelete(setupPath);
-                    return UpdateOutcome.Unsigned;
-                }
+                    UseShellExecute = false,
+                });
+                return UpdateOutcome.Launched;
             }
 
-            _log("setup verified (checksum + trusted Authenticode signature); launching silent update");
-            // The installer stops this service, backs up the current install, swaps files, and —
-            // if the new service won't start — restores the backup (see installer/stepwind.iss
-            // [Code]). We only ever hand it a verified, signed binary.
-            Process.Start(new ProcessStartInfo(setupPath, "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES")
-            {
-                UseShellExecute = false,
-            });
-            return UpdateOutcome.Launched;
+            // FREE, SAFE PATH: the download is checksum-verified but not code-signed, so we do NOT
+            // run it silently as SYSTEM (that would be the RCE channel). Instead we lock the staged
+            // file so only SYSTEM/Admins can replace it, and hand it to the user to install with one
+            // click — they get the normal UAC (and SmartScreen) prompt and consent, exactly like any
+            // download. The GUI surfaces "update ready" from the pipe status.
+            StoreAcl.HardenReadExecute(_stagingDir, _log);
+            CleanOtherStagedSetups(setupPath);
+            _log($"update {latest.ToString(3)} downloaded + checksum-verified and staged for one-click install ({trust})");
+            _onStaged?.Invoke(new PendingUpdate(latest.ToString(3), setupPath, Signed: false));
+            return UpdateOutcome.StagedForUserInstall;
         }
         catch (Exception ex)
         {
             _log("update check failed: " + ex.Message); // never fatal — protection keeps running
             return UpdateOutcome.Error;
         }
+    }
+
+    /// <summary>Removes any previously-staged setup other than the current one (keep the dir tidy).</summary>
+    private void CleanOtherStagedSetups(string keepPath)
+    {
+        try
+        {
+            foreach (string f in Directory.EnumerateFiles(_stagingDir, "StepWind-*-setup.exe"))
+            {
+                if (!string.Equals(f, keepPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDelete(f);
+                }
+            }
+        }
+        catch { /* best effort */ }
     }
 
     private async Task Download(string url, string dest, CancellationToken ct)

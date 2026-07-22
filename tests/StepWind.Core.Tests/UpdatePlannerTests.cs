@@ -172,4 +172,31 @@ public class UpdatePlannerTests
     {
         Assert.Equal(SignatureTrust.Error, Authenticode.VerifyFile(Path.Combine(Path.GetTempPath(), "does-not-exist-" + Guid.NewGuid().ToString("N") + ".exe")));
     }
+
+    [Theory]
+    [InlineData(SignatureTrust.NoSignature)]
+    [InlineData(SignatureTrust.Untrusted)]
+    [InlineData(SignatureTrust.Error)]
+    public void Only_a_trusted_signature_may_install_silently(SignatureTrust trust)
+    {
+        // An unsigned / untrusted setup is NEVER silently installed as SYSTEM — it's staged for a
+        // user-consented install instead. This is the gate that keeps the auto-updater from being
+        // an RCE channel while releases are unsigned.
+        Assert.False(UpdatePlanner.ShouldSilentlyInstall(trust, actualThumbprint: null, expectedThumbprint: null));
+    }
+
+    [Fact]
+    public void A_trusted_unpinned_signature_may_install_silently()
+    {
+        Assert.True(UpdatePlanner.ShouldSilentlyInstall(SignatureTrust.Trusted, "ABCD", expectedThumbprint: null));
+        Assert.True(UpdatePlanner.ShouldSilentlyInstall(SignatureTrust.Trusted, "ABCD", expectedThumbprint: ""));
+    }
+
+    [Fact]
+    public void A_pinned_thumbprint_must_match_to_install_silently()
+    {
+        Assert.True(UpdatePlanner.ShouldSilentlyInstall(SignatureTrust.Trusted, "ABCD", "abcd"));   // case-insensitive match
+        Assert.False(UpdatePlanner.ShouldSilentlyInstall(SignatureTrust.Trusted, "BEEF", "ABCD"));  // trusted, wrong cert
+        Assert.False(UpdatePlanner.ShouldSilentlyInstall(SignatureTrust.Trusted, null, "ABCD"));    // trusted, no thumbprint read
+    }
 }

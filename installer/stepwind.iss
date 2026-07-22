@@ -261,3 +261,6 @@ Filename: "{app}\StepWind.Service.exe"; Parameters: "uninstall-service"; Flags: 
 ; the MCP server copy (a dead exe path in AI tools' configs is useless without the service).
 Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{commonappdata}\StepWind\bin"
+; Staged update installers + rollback backup are useless once StepWind is gone.
+Type: filesandordirs; Name: "{commonappdata}\StepWind\updates"
+Type: filesandordirs; Name: "{commonappdata}\StepWind\update-backup"

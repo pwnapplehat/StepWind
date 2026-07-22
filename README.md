@@ -207,8 +207,20 @@ left intact.
 Windows 10 (1809+) or Windows 11, an NTFS drive.
 
 > **"Windows protected your PC"?** Expected for a new unsigned installer — not a malware
-> detection. Click **More info → Run anyway**. It's open source; each release ships a
-> `SHA256SUMS.txt`.
+> detection. Click **More info → Run anyway**. Every release ships a `SHA256SUMS.txt`; verify
+> your download with `(Get-FileHash .\StepWind-x.y.z-setup.exe -Algorithm SHA256).Hash` and
+> compare. Code signing (which removes this prompt) is planned via the free **SignPath
+> Foundation** open-source program — see [SECURITY.md](SECURITY.md).
+
+## Security
+
+StepWind runs a LocalSystem service, so its trust boundaries are written down explicitly in
+**[SECURITY.md](SECURITY.md)**: who may read/restore/purge which history over the pipe (the
+service authorizes every request against the connecting Windows user), why timeline undo handles
+can't be forged, what encryption does and doesn't cover, and how updates are verified
+(checksum + Authenticode, fail-closed — an unsigned build is staged for a one-click, you-approve
+install rather than run silently). Found something? Open a
+[security advisory](https://github.com/pwnapplehat/StepWind/security/advisories/new).
 
 ## Building
 

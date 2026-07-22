@@ -20,8 +20,11 @@ public enum UpdateOutcome
     /// <summary>The downloaded setup is not Authenticode-signed by a trusted publisher — refused.</summary>
     Unsigned,
 
-    /// <summary>Everything verified; the installer was launched.</summary>
+    /// <summary>Everything verified AND the setup is trusted-signed; installed silently.</summary>
     Launched,
+
+    /// <summary>Everything verified but the setup isn't signed; staged for one-click user install (no silent SYSTEM run).</summary>
+    StagedForUserInstall,
 
     /// <summary>A network/IO error occurred; protection keeps running and we retry later.</summary>
     Error,
@@ -35,6 +38,23 @@ public enum UpdateOutcome
 /// </summary>
 public static class UpdatePlanner
 {
+    /// <summary>
+    /// The security gate for a NO-PROMPT, SYSTEM-run install: only a setup that is Authenticode
+    /// <see cref="SignatureTrust.Trusted"/> — and, once a thumbprint is pinned, signed by exactly
+    /// StepWind's certificate — may install silently. Everything else must be staged for a
+    /// user-consented install instead. Kept pure so this decision is unit-tested directly.
+    /// </summary>
+    public static bool ShouldSilentlyInstall(SignatureTrust trust, string? actualThumbprint, string? expectedThumbprint)
+    {
+        if (trust != SignatureTrust.Trusted)
+        {
+            return false;
+        }
+
+        return string.IsNullOrEmpty(expectedThumbprint)
+            || string.Equals(actualThumbprint, expectedThumbprint, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>Normalizes a tag/version string ("v1.2.3", "1.2.3-rc1+build") to a 3-part <see cref="Version"/>.</summary>
     public static bool TryParseVersion(string? s, out Version version)
     {
@@ -135,3 +155,11 @@ public static class UpdatePlanner
 
 /// <summary>Parsed "latest release" facts: the tag and the two asset URLs we care about.</summary>
 public sealed record ReleaseInfo(string? Tag, string? SetupUrl, string? SumsUrl);
+
+/// <summary>
+/// A verified update that's been downloaded and checksum-checked, staged on disk, and is waiting
+/// for the user to install it with one click (normal UAC). This is the FREE, safe path used when
+/// the release isn't code-signed: the service never silently runs an unsigned installer as
+/// SYSTEM — it hands a verified file to the user, who consents to the elevation like any install.
+/// </summary>
+public sealed record PendingUpdate(string Version, string SetupPath, bool Signed);

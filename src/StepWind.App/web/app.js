@@ -1023,9 +1023,15 @@ async function loadSettings() {
 
       <div class="set-section">
         <div class="set-label">Updates</div>
+        ${lastStatus?.UpdateReadyVersion ? `
+        <div class="card set-card" style="border-color:var(--accent)"><div class="set-row">
+          <div><div class="set-title">Update ${esc(lastStatus.UpdateReadyVersion)} is ready to install</div>
+          <div class="set-sub">Downloaded and checksum-verified. Click Install — Windows will ask for permission (the app isn't code-signed yet, so you'll see the usual prompt), then it updates and restarts protection.</div></div>
+          <button class="btn primary" id="do-update" style="margin-left:auto;flex-shrink:0">Install now</button>
+        </div></div>` : ""}
         <div class="card set-card"><div class="set-row">
           <div><div class="set-title">Automatic updates</div>
-          <div class="set-sub">The service checks GitHub daily and installs an update only if it passes a SHA-256 checksum and a trusted code-signature check, rolling back if a new build won't start. (Until releases are code-signed, updates won't install on their own.)</div></div>
+          <div class="set-sub">The service checks GitHub daily. A trusted code-signed release installs on its own; otherwise the verified download is staged and offered here as a one-click install (with a permission prompt) — an unsigned installer is never run silently.</div></div>
           ${sw("sw-update", s?.AutoUpdateEnabled)}
         </div></div>
       </div>
@@ -1122,6 +1128,17 @@ async function loadSettings() {
   // Toggles: optimistic flip, push the patch, then reload from the service — on failure the
   // reload snaps the switch back to the truth (e.g. flight recorder in an unprivileged run).
   wireSwitch("sw-update", (on) => patchAndReload({ AutoUpdateEnabled: on }, false));
+  const updateBtn = $("#do-update");
+  if (updateBtn) updateBtn.onclick = async () => {
+    updateBtn.disabled = true;
+    try {
+      await call("installUpdate", { path: lastStatus.UpdateReadyPath });
+      toast("ok", "Installing update", "Approve the Windows prompt to finish. StepWind will restart.");
+    } catch (err) {
+      toast("err", "Couldn't start the update", err.message);
+      updateBtn.disabled = false;
+    }
+  };
   wireSwitch("sw-fr", (on) => patchAndReload({ FlightRecorderEnabled: on }, true));
   wireSwitch("sw-enc", (on) => patchAndReload({ EncryptionEnabled: on }, true));
 
