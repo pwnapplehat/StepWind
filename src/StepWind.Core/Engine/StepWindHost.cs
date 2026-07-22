@@ -18,7 +18,9 @@ namespace StepWind.Core.Engine;
 public sealed class StepWindHost : IDisposable
 {
     private readonly StepWindSettings _settings;
-    private readonly VersionStore _store;
+    private readonly IBlobCodec _codec;
+    private VersionStore _store; // swappable: store relocation rebuilds it at the new root
+    private volatile bool _relocating;
     private FlightRecorder? _flightRecorder; // swapped live by the settings toggle
     private readonly System.Threading.Timer _retentionTimer;
     private readonly System.Threading.Timer _storageTimer;
@@ -40,6 +42,7 @@ public sealed class StepWindHost : IDisposable
     {
         _settings = settings;
         _log = log;
+        _codec = codec;
         _migCodec = codec as MigratingBlobCodec; // live encryption toggling needs this codec
 
         // The store holds copies of the user's documents under %ProgramData% — lock it to
@@ -237,7 +240,7 @@ public sealed class StepWindHost : IDisposable
         }
 
         return new WatchEngine(_store, exclusions, _settings.WatchedFolders, _log,
-            canCapture: () => !_storageState.Paused,
+            canCapture: () => !_storageState.Paused && !_relocating,
             respectGitIgnore: () => _settings.RespectGitIgnore);
     }
 
@@ -261,6 +264,7 @@ public sealed class StepWindHost : IDisposable
                 IpcCommand.GetRecentFiles => Ok(BuildRecentFiles(request.Limit, caller)),
                 IpcCommand.ReverseOperation => ReverseOperation(request.Arg1 ?? "", caller),
                 IpcCommand.ReverseBatch => ReverseBatch(request.Arg1 ?? "", caller),
+                IpcCommand.RelocateStore => RequirePrivilege(caller) ?? RelocateStore(request.Arg1 ?? ""),
                 IpcCommand.RestoreVersion => RestoreVersion(request.Arg1 ?? "", request.Arg2, caller),
                 IpcCommand.RunRetention => RequirePrivilege(caller) ?? RunRetentionCommand(),
                 IpcCommand.GetSettings => Ok(BuildSettings()),
@@ -1375,6 +1379,156 @@ public sealed class StepWindHost : IDisposable
     {
         RetentionResult r = RunRetention();
         return IpcResponse.Success(JsonSerializer.Serialize(r));
+    }
+
+    /// <summary>
+    /// Moves the history store to a new drive/folder. Safety-first: COPY the whole store to the
+    /// new location, VERIFY the copy is fully restorable, only THEN switch the live store to it —
+    /// and NEVER delete the old store (it's left intact so a relocation can never lose history;
+    /// the caller is told where it is to remove later). Captures are paused for the duration.
+    /// Admin-only (gated by the dispatcher).
+    /// </summary>
+    private IpcResponse RelocateStore(string newRootArg)
+    {
+        if (string.IsNullOrWhiteSpace(newRootArg))
+        {
+            return IpcResponse.Fail("no destination given");
+        }
+
+        string oldRoot = System.IO.Path.GetFullPath(_settings.StoreRoot);
+        string newRoot;
+        try
+        {
+            newRoot = System.IO.Path.GetFullPath(newRootArg.Trim());
+        }
+        catch (Exception ex)
+        {
+            return IpcResponse.Fail("invalid destination: " + ex.Message);
+        }
+
+        if (string.Equals(newRoot, oldRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return IpcResponse.Fail("that's already where the history store is.");
+        }
+
+        if (IsSubPath(newRoot, oldRoot) || IsSubPath(oldRoot, newRoot))
+        {
+            return IpcResponse.Fail("the new location can't be inside the current store (or vice versa).");
+        }
+
+        foreach (string watched in _settings.WatchedFolders)
+        {
+            if (IsSubPath(newRoot, watched) || string.Equals(newRoot, System.IO.Path.GetFullPath(watched), StringComparison.OrdinalIgnoreCase))
+            {
+                return IpcResponse.Fail($"the new location can't be inside a protected folder ('{watched}') — that would version the store itself.");
+            }
+        }
+
+        if (Directory.Exists(newRoot) && Directory.EnumerateFileSystemEntries(newRoot).Any())
+        {
+            return IpcResponse.Fail("the new location must be an empty (or new) folder.");
+        }
+
+        // Enough room on the target?
+        long storeBytes = _store.Blobs.TotalBytes + SafeFileLength(System.IO.Path.Combine(oldRoot, "versions.jsonl"));
+        try
+        {
+            string? drive = System.IO.Path.GetPathRoot(newRoot);
+            if (drive is not null)
+            {
+                long free = new DriveInfo(drive).AvailableFreeSpace;
+                if (free < storeBytes + (64L * 1024 * 1024))
+                {
+                    return IpcResponse.Fail($"not enough free space at the destination ({free / 1024 / 1024} MB free, need ~{storeBytes / 1024 / 1024} MB).");
+                }
+            }
+        }
+        catch { /* if we can't tell, let the copy try and fail loudly */ }
+
+        _relocating = true; // stop captures while we copy
+        try
+        {
+            // Copy the whole store with captures + GC held off, so the copy is a consistent snapshot.
+            _store.RunExclusive<object?>(() =>
+            {
+                CopyDirectory(oldRoot, newRoot);
+                return null;
+            });
+
+            // Verify the COPY before trusting it — every version must reconstruct from the new root.
+            var verifyStore = new VersionStore(
+                new BlobStore(newRoot, _codec),
+                new VersionLog(System.IO.Path.Combine(newRoot, "versions.jsonl")));
+            VerifyReport report = StoreMaintenance.Verify(verifyStore.Log, verifyStore.Blobs);
+            if (report.UnrestorableVersions > 0)
+            {
+                return IpcResponse.Fail($"the copied store failed verification ({report.UnrestorableVersions} damaged of {report.TotalVersions}); staying on the current store and leaving the copy in place for inspection.");
+            }
+
+            StoreAcl.Harden(newRoot, _log);
+
+            // Switch the live store + watch engine to the new root.
+            lock (_watchLock)
+            {
+                _store = verifyStore;
+                _settings.StoreRoot = newRoot;
+                WatchEngine old = _watch;
+                _watch = BuildWatch();
+                old.Dispose();
+            }
+
+            _settings.Save();
+            _storage = new StorageGuard(newRoot, _settings.MinFreeDiskBytes, _settings.MaxStoreBytes);
+            RefreshStorageState();
+
+            // The flight recorder ignores the store path so its own churn isn't on the timeline;
+            // restart it so it ignores the NEW location (if it was running).
+            if (_flightRecorder is not null)
+            {
+                StopFlightRecorder();
+                TryStartFlightRecorder();
+            }
+
+            _log?.Invoke($"store relocated to {newRoot}; previous store left intact at {oldRoot}");
+            return Ok(new
+            {
+                NewRoot = newRoot,
+                OldRoot = oldRoot,
+                report.TotalVersions,
+                Message = $"History moved to {newRoot}. The old copy at {oldRoot} was left untouched — delete it yourself once you've confirmed everything's fine.",
+            });
+        }
+        catch (Exception ex)
+        {
+            return IpcResponse.Fail("relocation failed (staying on the current store): " + ex.Message);
+        }
+        finally
+        {
+            _relocating = false;
+        }
+    }
+
+    private static bool IsSubPath(string candidate, string ancestor)
+    {
+        string a = System.IO.Path.GetFullPath(ancestor).TrimEnd('\\', '/') + System.IO.Path.DirectorySeparatorChar;
+        string c = System.IO.Path.GetFullPath(candidate).TrimEnd('\\', '/') + System.IO.Path.DirectorySeparatorChar;
+        return c.StartsWith(a, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void CopyDirectory(string src, string dst)
+    {
+        Directory.CreateDirectory(dst);
+        foreach (string dir in Directory.EnumerateDirectories(src, "*", SearchOption.AllDirectories))
+        {
+            Directory.CreateDirectory(dir.Replace(src, dst, StringComparison.OrdinalIgnoreCase));
+        }
+
+        foreach (string file in Directory.EnumerateFiles(src, "*", SearchOption.AllDirectories))
+        {
+            string target = file.Replace(src, dst, StringComparison.OrdinalIgnoreCase);
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(target)!);
+            File.Copy(file, target, overwrite: true);
+        }
     }
 
     private IpcResponse VerifyStoreCommand(string? arg)

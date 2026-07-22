@@ -41,6 +41,7 @@ public enum IpcCommand
     VerifyStore = 15,        // integrity check of the history store (Arg1 = "deep" for re-hash)
     RepairStore = 16,        // quarantine unrestorable versions + sweep orphans (admin; Arg1 = "deep")
     ReverseBatch = 17,       // reverse many operations at once — Arg1 = JSON array of operation ids
+    RelocateStore = 18,      // copy the history store to a new drive/folder (admin; Arg1 = new root)
 }
 
 public sealed record IpcRequest

@@ -37,6 +37,7 @@ return args.FirstOrDefault()?.ToLowerInvariant() switch
     "repair" => Call(StepWind.Core.Ipc.IpcCommand.RepairStore, a1: args.Contains("--deep") ? "deep" : null),
     "protect" => ProtectFolder(Arg(args, 1), add: true),
     "unprotect" => ProtectFolder(Arg(args, 1), add: false),
+    "relocate-store" => Call(StepWind.Core.Ipc.IpcCommand.RelocateStore, a1: Arg(args, 1)),
     _ => Help(),
 };
 
@@ -300,6 +301,7 @@ static int Help()
           stepwind-cli protect <folder>              start protecting a folder
           stepwind-cli unprotect <folder>            stop protecting a folder (history kept)
           stepwind-cli repair [--deep]               quarantine unrestorable versions (admin)
+          stepwind-cli relocate-store <folder>       move the history store to a new folder (admin)
           stepwind-cli purge "*"|unprotected|<prefix>  delete stored history (destructive)
           stepwind-cli set-encryption on|off         toggle store encryption
         Recovery (admin):

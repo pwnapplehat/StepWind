@@ -91,6 +91,7 @@ public sealed class Bridge(MainWindow window)
         "purge" => await PipeAsync(IpcCommand.PurgeHistory, Require(p, "selector")),
         "verifyStore" => await PipeAsync(IpcCommand.VerifyStore, p?["deep"]?.GetValue<bool>() == true ? "deep" : null),
         "repairStore" => await PipeAsync(IpcCommand.RepairStore, p?["deep"]?.GetValue<bool>() == true ? "deep" : null),
+        "relocateStore" => await RelocateStoreAsync(),
         "patch" => await PatchSettingsAsync(p),
 
         // ── host: AI agents ──
@@ -382,6 +383,22 @@ public sealed class Bridge(MainWindow window)
         {
             return null;
         }
+    }
+
+    /// <summary>Picks a destination folder and asks the service to move the history store there (admin).</summary>
+    private async Task<JsonNode?> RelocateStoreAsync()
+    {
+        string? picked = null;
+        window.RunOnUi(() =>
+        {
+            var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Choose a new (empty) folder for your version history" };
+            if (dialog.ShowDialog() == true)
+            {
+                picked = dialog.FolderName;
+            }
+        });
+
+        return picked is null ? null : await PipeAsync(IpcCommand.RelocateStore, picked);
     }
 
     private JsonNode? PickFolder(string? title)

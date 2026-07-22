@@ -1159,6 +1159,11 @@ async function loadSettings() {
             <button class="btn" id="dm-verify" style="margin-left:auto;flex-shrink:0">Check now</button>
           </div>
           <div class="set-row">
+            <div><div class="set-title">Move history store</div>
+            <div class="set-sub">Relocate your saved versions to another drive or folder (e.g. off the system disk). The move copies everything, verifies it, then switches over — your old copy is left untouched until you remove it. Requires administrator.</div></div>
+            <button class="btn" id="dm-relocate" style="margin-left:auto;flex-shrink:0">Move…</button>
+          </div>
+          <div class="set-row">
             <div><div class="set-title" style="color:var(--danger-text)">Delete all history</div>
             <div class="set-sub">Permanently deletes every saved version of every file and frees the disk space. Your actual files are not touched.</div></div>
             <button class="btn danger" id="dm-all" style="margin-left:auto;flex-shrink:0">Delete all…</button>
@@ -1282,6 +1287,17 @@ async function loadSettings() {
     } finally {
       btn.disabled = false;
       btn.textContent = prev;
+    }
+  };
+
+  $("#dm-relocate", host).onclick = async () => {
+    try {
+      const res = await call("relocateStore", {});
+      if (!res) return; // cancelled the folder picker
+      await pollStatus();
+      dlg.notice("History moved", res.Message || `Moved to ${res.NewRoot}.`);
+    } catch (err) {
+      dlg.notice("Couldn't move the history store", err.message);
     }
   };
 
