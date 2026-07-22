@@ -51,7 +51,8 @@ public sealed class StepWindHost : IDisposable
 
         _store = new VersionStore(
             new BlobStore(settings.StoreRoot, codec),
-            new VersionLog(System.IO.Path.Combine(settings.StoreRoot, "versions.jsonl")));
+            new VersionLog(System.IO.Path.Combine(settings.StoreRoot, "versions.jsonl"),
+                BuildIndexCipher(settings.StoreRoot), encryptOnWrite: settings.EncryptionEnabled && settings.EncryptIndex));
         _store.Blobs.CleanTemp(); // drop any half-written blobs from a previous crash
 
         _storage = new StorageGuard(settings.StoreRoot, settings.MinFreeDiskBytes, settings.MaxStoreBytes);
@@ -154,6 +155,29 @@ public sealed class StepWindHost : IDisposable
                 try { watch.Reconcile(_lifetime.Token); }
                 catch (Exception ex) { _log?.Invoke("post-pause catch-up failed: " + ex.Message); }
             });
+        }
+    }
+
+    /// <summary>
+    /// Builds the index cipher for READING encrypted index lines whenever a store key exists — even
+    /// if index encryption is currently off — so turning it off (or a mixed file) never orphans
+    /// history. Returns null when there's no key (encryption never enabled) or on any error.
+    /// </summary>
+    private IIndexCipher? BuildIndexCipher(string storeRoot)
+    {
+        try
+        {
+            if (!File.Exists(System.IO.Path.Combine(storeRoot, "store.key")))
+            {
+                return null;
+            }
+
+            return new BlobCodecIndexCipher(new AesGcmBlobCodec(KeyProtector.LoadOrCreate(storeRoot)));
+        }
+        catch (Exception ex)
+        {
+            _log?.Invoke("index cipher unavailable: " + ex.Message);
+            return null;
         }
     }
 
@@ -562,6 +586,7 @@ public sealed class StepWindHost : IDisposable
         _settings.FlightRecorderEnabled,
         _settings.AutoUpdateEnabled,
         _settings.EncryptionEnabled,
+        _settings.EncryptIndex,
         _settings.FirstRunCompleted,
         _settings.TimelineProtectedOnly,
         _settings.RespectGitIgnore,
@@ -581,6 +606,7 @@ public sealed class StepWindHost : IDisposable
         public List<string>? ExcludedPrefixes { get; set; }
         public bool? AutoUpdateEnabled { get; set; }
         public bool? EncryptionEnabled { get; set; }
+        public bool? EncryptIndex { get; set; }
         public bool? FlightRecorderEnabled { get; set; }
         public bool? TimelineProtectedOnly { get; set; }
         public bool? RespectGitIgnore { get; set; }
@@ -687,6 +713,15 @@ public sealed class StepWindHost : IDisposable
         if (patch.RespectGitIgnore is bool rgi)
         {
             _settings.RespectGitIgnore = rgi; // read live by the watch engine — no rebuild needed
+        }
+
+        if (patch.EncryptIndex is bool ei && ei != _settings.EncryptIndex)
+        {
+            // Persisted now; the index cipher's write mode is fixed at store construction, so this
+            // takes effect at the next service start (existing encrypted lines stay readable either
+            // way, and a later retention rewrite converges the file to the new mode).
+            _settings.EncryptIndex = ei;
+            _log?.Invoke($"index encryption {(ei ? "enabled" : "disabled")} — applies on next service restart");
         }
 
         bool storageChanged = false;
@@ -1458,7 +1493,8 @@ public sealed class StepWindHost : IDisposable
             // Verify the COPY before trusting it — every version must reconstruct from the new root.
             var verifyStore = new VersionStore(
                 new BlobStore(newRoot, _codec),
-                new VersionLog(System.IO.Path.Combine(newRoot, "versions.jsonl")));
+                new VersionLog(System.IO.Path.Combine(newRoot, "versions.jsonl"),
+                    BuildIndexCipher(newRoot), encryptOnWrite: _settings.EncryptionEnabled && _settings.EncryptIndex));
             VerifyReport report = StoreMaintenance.Verify(verifyStore.Log, verifyStore.Blobs);
             if (report.UnrestorableVersions > 0)
             {

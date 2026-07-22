@@ -37,7 +37,7 @@ public sealed class Bridge(MainWindow window)
     /// <summary>Settings keys the web layer may patch. Anything else is rejected.</summary>
     private static readonly HashSet<string> AllowedSettingsKeys = new(StringComparer.Ordinal)
     {
-        "WatchedFolders", "ExcludedPrefixes", "AutoUpdateEnabled", "EncryptionEnabled",
+        "WatchedFolders", "ExcludedPrefixes", "AutoUpdateEnabled", "EncryptionEnabled", "EncryptIndex",
         "FlightRecorderEnabled", "TimelineProtectedOnly", "RespectGitIgnore",
         "MinFreeDiskBytes", "MaxStoreBytes",
         "RetentionKeepAllHours",

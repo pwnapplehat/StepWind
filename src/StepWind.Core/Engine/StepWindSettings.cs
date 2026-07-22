@@ -43,6 +43,14 @@ public sealed class StepWindSettings
     /// </summary>
     public bool EncryptionEnabled { get; set; }
 
+    /// <summary>
+    /// Also encrypt the version INDEX (file names, paths, dates) — not just blob content — so an
+    /// offline/stolen drive reveals no metadata either. Only meaningful with
+    /// <see cref="EncryptionEnabled"/>. Applied at service start; existing encrypted index lines
+    /// always stay readable (the key is used for reading regardless of this flag).
+    /// </summary>
+    public bool EncryptIndex { get; set; }
+
     /// <summary>Largest single file to version, bytes (0 = unlimited).</summary>
     public long MaxFileBytes { get; set; } = 2L * 1024 * 1024 * 1024;
 

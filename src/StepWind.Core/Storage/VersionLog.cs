@@ -19,11 +19,49 @@ public sealed class VersionLog
     private readonly object _appendLock = new();
     private readonly List<FileVersion> _versions = [];
 
-    public VersionLog(string path)
+    // Optional metadata encryption. IMPORTANT asymmetry: the cipher is used for READING whenever
+    // it's present (so encrypted lines are always decryptable and can never be orphaned), but only
+    // WRITES when _encryptOnWrite is set — so turning index encryption off still reads existing
+    // encrypted lines and writes plaintext going forward (retention's Rewrite converges the file).
+    private readonly IIndexCipher? _cipher;
+    private readonly bool _encryptOnWrite;
+
+    public VersionLog(string path, IIndexCipher? cipher = null, bool encryptOnWrite = false)
     {
         _path = path;
+        _cipher = cipher;
+        _encryptOnWrite = encryptOnWrite && cipher is not null;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         Load();
+    }
+
+    /// <summary>Serializes a version to the on-disk line form (encrypted iff writing encrypted).</summary>
+    private string FormatLine(FileVersion version)
+    {
+        string json = JsonSerializer.Serialize(version, Json);
+        return _encryptOnWrite ? _cipher!.Encrypt(json) : json;
+    }
+
+    /// <summary>Parses one on-disk line (plaintext JSON or an encrypted token). Null if unreadable.</summary>
+    private FileVersion? ParseLine(string line)
+    {
+        string json;
+        if (line.StartsWith('{'))
+        {
+            json = line; // legacy / plaintext line — readable regardless of cipher
+        }
+        else if (_cipher is not null)
+        {
+            try { json = _cipher.Decrypt(line); }
+            catch { return null; } // wrong key / corrupt token
+        }
+        else
+        {
+            return null; // encrypted line but no key available to read it
+        }
+
+        try { return JsonSerializer.Deserialize<FileVersion>(json, Json); }
+        catch (JsonException) { return null; } // truncated final line from a crash — safe to skip
     }
 
     /// <summary>
@@ -68,7 +106,7 @@ public sealed class VersionLog
     /// <summary>Durably appends a version and returns it.</summary>
     public FileVersion Append(FileVersion version)
     {
-        string line = JsonSerializer.Serialize(version, Json);
+        string line = FormatLine(version);
         lock (_appendLock)
         {
             using (var fs = new FileStream(_path, FileMode.Append, FileAccess.Write, FileShare.Read))
@@ -99,7 +137,7 @@ public sealed class VersionLog
             {
                 foreach (FileVersion v in keep)
                 {
-                    writer.WriteLine(JsonSerializer.Serialize(v, Json));
+                    writer.WriteLine(FormatLine(v)); // re-encrypts (or de-encrypts) to the current mode
                 }
 
                 writer.Flush();
@@ -172,18 +210,12 @@ public sealed class VersionLog
                 continue;
             }
 
-            try
+            // Handles plaintext, encrypted, and truncated lines (see ParseLine). A mixed file
+            // (plaintext legacy lines + encrypted new lines) reads cleanly during migration.
+            FileVersion? v = ParseLine(line.Trim());
+            if (v is not null)
             {
-                FileVersion? v = JsonSerializer.Deserialize<FileVersion>(line, Json);
-                if (v is not null)
-                {
-                    _versions.Add(v);
-                }
-            }
-            catch (JsonException)
-            {
-                // Truncated final line from a crash mid-append — safe to skip; everything
-                // before it is intact because appends are line-atomic.
+                _versions.Add(v);
             }
         }
     }

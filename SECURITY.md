@@ -53,9 +53,11 @@ as SYSTEM."
 Version history lives under `%ProgramData%\StepWind\store`, ACL-locked to **SYSTEM +
 Administrators** (standard users can't read it directly — they go through the authorized pipe).
 Optional encryption at rest is AES-256-GCM with a key sealed by machine-scope DPAPI. **Encryption
-protects blob *content* at rest** (a stolen/offline drive can't be read elsewhere); it does **not**
-hide the index of names/dates from an administrator on the same machine, and it is not a
-cross-user privacy boundary — that is enforced by the authorization above.
+protects blob *content* at rest** (a stolen/offline drive can't be read elsewhere). By default the
+*index* (file names, paths, dates) is plaintext; enabling **"Also encrypt the index"** (Settings →
+Protection) encrypts each index line with the same AES-256-GCM key, so an offline drive reveals no
+metadata either. Encryption is **not** a cross-user privacy boundary on the same machine — that is
+enforced by the authorization above — and machine-scope DPAPI is decryptable by any local admin.
 
 **Recovery key.** Because the live key is machine-DPAPI-sealed, an OS reinstall or moving the disk
 to another machine would otherwise orphan encrypted history forever. Export a passphrase-protected
@@ -111,5 +113,6 @@ detection. Choose **More info → Run anyway**, and verify the SHA-256 as above.
 - **Same-name folders can't both be protected.** Two protected folders that share a leaf name
   ("Documents") would share one history namespace; adding the second is refused rather than
   silently merging them. A future stable per-root id will lift this.
-- **Metadata isn't encrypted.** File paths, names, and timestamps in the version index are stored
-  in plaintext even when blob content is encrypted (see "The store").
+- **Metadata encryption is opt-in.** File paths, names, and timestamps in the version index are
+  plaintext by default even when blob content is encrypted; enable "Also encrypt the index" to
+  cover them too (see "The store").

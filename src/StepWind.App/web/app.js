@@ -1105,10 +1105,16 @@ async function loadSettings() {
           </div>
           <div class="set-row">
             <div><div class="set-title">Encryption at rest</div>
-            <div class="set-sub">AES-256-GCM with a key sealed by Windows (machine scope) — a stolen or offline drive can't read your history. Toggling re-encodes existing versions in the background; everything stays restorable throughout. File contents are encrypted; the index of names and dates is not.</div>
+            <div class="set-sub">AES-256-GCM with a key sealed by Windows (machine scope) — a stolen or offline drive can't read your history. Toggling re-encodes existing versions in the background; everything stays restorable throughout.</div>
             ${lastStatus?.ReEncoding ? '<div class="badge-live">Re-encoding your history in the background…</div>' : ""}</div>
             ${sw("sw-enc", s?.EncryptionEnabled)}
           </div>
+          ${s?.EncryptionEnabled ? `
+          <div class="set-row">
+            <div><div class="set-title">Also encrypt the index (names &amp; dates)</div>
+            <div class="set-sub">By default only file <em>contents</em> are encrypted; turn this on to also encrypt the list of file names, paths, and timestamps, so an offline drive reveals no metadata either. Takes effect after the service restarts; existing history stays readable throughout.</div></div>
+            ${sw("sw-encidx", s?.EncryptIndex)}
+          </div>` : ""}
           <div class="set-row">
             <div><div class="set-title">History storage</div>
             <div class="set-sub">Deduplicated and compressed — old versions are garbage-collected automatically per the retention rules below.</div></div>
@@ -1219,6 +1225,7 @@ async function loadSettings() {
   wireSwitch("sw-fr", (on) => patchAndReload({ FlightRecorderEnabled: on }, true));
   wireSwitch("sw-gitignore", (on) => patchAndReload({ RespectGitIgnore: on }, false));
   wireSwitch("sw-enc", (on) => patchAndReload({ EncryptionEnabled: on }, true));
+  wireSwitch("sw-encidx", (on) => patchAndReload({ EncryptIndex: on }, false));
 
   $("#ret-apply", host).onclick = async () => {
     const patch = {
