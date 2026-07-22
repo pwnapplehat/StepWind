@@ -18,8 +18,10 @@ public interface IFileSystemActions
 ///   • the item must still be where the operation left it (NewPath),
 ///   • the original location (OldPath) must be free — we never overwrite whatever lives there
 ///     now, so reversing can't itself cause the data loss it's meant to fix.
-/// Deletes are not reversed here (there's nothing to move back); the app routes those to
-/// Recycle-Bin restore or the version store instead.
+/// Deletes are not reversed here (there's nothing to move back): a delete is recovered from the
+/// version store instead — the timeline offers "Restore" on a deleted file that has saved
+/// history (see StepWindHost.RecoverableVersionFor), which lands the last saved version back
+/// without overwriting anything.
 /// </summary>
 public static class OperationReverser
 {

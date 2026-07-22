@@ -21,12 +21,15 @@ public sealed class StepWindHost : IDisposable
     private readonly VersionStore _store;
     private FlightRecorder? _flightRecorder; // swapped live by the settings toggle
     private readonly System.Threading.Timer _retentionTimer;
+    private readonly System.Threading.Timer _storageTimer;
     private readonly Action<string>? _log;
     private readonly RealFileSystemActions _fs = new();
     private readonly object _watchLock = new();
     private readonly MigratingBlobCodec? _migCodec;
     private readonly CancellationTokenSource _lifetime = new();
+    private StorageGuard _storage;
     private volatile bool _reEncoding;
+    private volatile StorageState _storageState = new(false, null, -1, 0, 0, 0);
     private WatchEngine _watch;
 
     public StepWindHost(StepWindSettings settings, IBlobCodec codec, Action<string>? log = null)
@@ -44,6 +47,9 @@ public sealed class StepWindHost : IDisposable
             new VersionLog(System.IO.Path.Combine(settings.StoreRoot, "versions.jsonl")));
         _store.Blobs.CleanTemp(); // drop any half-written blobs from a previous crash
 
+        _storage = new StorageGuard(settings.StoreRoot, settings.MinFreeDiskBytes, settings.MaxStoreBytes);
+        RefreshStorageState();
+
         // A crash mid-re-encode leaves the marker dirty; the mixed store is fully readable
         // regardless, and this resumes the pass so it converges to the target format.
         if (_migCodec is not null && ReadCodecState().EndsWith(":dirty", StringComparison.Ordinal))
@@ -53,6 +59,7 @@ public sealed class StepWindHost : IDisposable
         }
 
         _watch = BuildWatch();
+        BackfillRootOwners();
 
         if (settings.FlightRecorderEnabled)
         {
@@ -75,6 +82,54 @@ public sealed class StepWindHost : IDisposable
         // Retention + GC daily (and once shortly after start).
         _retentionTimer = new System.Threading.Timer(_ => RunRetention(), null,
             TimeSpan.FromMinutes(5), TimeSpan.FromHours(24));
+
+        // Watch storage headroom every 30s so a pause (or its release) is noticed quickly, and
+        // an emergency prune runs the moment the disk gets tight — not only on the daily pass.
+        _storageTimer = new System.Threading.Timer(_ => MonitorStorage(), null,
+            TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    /// <summary>Recomputes the storage pause state from current free space + store size.</summary>
+    private void RefreshStorageState()
+    {
+        long storeBytes = _store.Blobs.TotalBytes + SafeFileLength(System.IO.Path.Combine(_settings.StoreRoot, "versions.jsonl"));
+        _storageState = _storage.Evaluate(storeBytes);
+    }
+
+    /// <summary>
+    /// Periodic storage watchdog. On a low-space/over-quota transition it logs loudly and runs an
+    /// emergency retention prune to try to win space back; when space returns, capturing resumes
+    /// automatically (a reconcile catches up anything missed while paused).
+    /// </summary>
+    private void MonitorStorage()
+    {
+        bool wasPaused = _storageState.Paused;
+        RefreshStorageState();
+
+        if (_storageState.Paused && !wasPaused)
+        {
+            _log?.Invoke("STORAGE PAUSE: " + _storageState.Reason);
+            try
+            {
+                RunRetention(); // emergency prune — free space by thinning old versions now
+                RefreshStorageState();
+            }
+            catch (Exception ex)
+            {
+                _log?.Invoke("emergency prune failed: " + ex.Message);
+            }
+        }
+        else if (!_storageState.Paused && wasPaused)
+        {
+            _log?.Invoke("storage recovered — capturing resumed");
+            // Catch up anything that changed while paused.
+            WatchEngine watch = _watch;
+            _ = Task.Run(() =>
+            {
+                try { watch.Reconcile(_lifetime.Token); }
+                catch (Exception ex) { _log?.Invoke("post-pause catch-up failed: " + ex.Message); }
+            });
+        }
     }
 
     /// <summary>Starts the flight recorder (USN + ETW). Returns null on success, else the reason.</summary>
@@ -111,6 +166,42 @@ public sealed class StepWindHost : IDisposable
         }
     }
 
+    /// <summary>
+    /// Gives existing (pre-authorization) installs a reasonable owner for each already-protected
+    /// folder, so upgrading doesn't lock the current user out of their own history. Owner is the
+    /// folder's on-disk NTFS owner SID when readable; otherwise the root is left unscoped (empty
+    /// owners) and the live "can the caller read this folder" check governs access. Only fills
+    /// gaps — never overwrites an owner set already recorded when a folder was added.
+    /// </summary>
+    private void BackfillRootOwners()
+    {
+        foreach (string root in _settings.WatchedFolders)
+        {
+            string leaf = System.IO.Path.GetFileName(root) ?? root;
+            if (_settings.RootOwners.ContainsKey(leaf))
+            {
+                continue;
+            }
+
+            var owners = new List<string>();
+            try
+            {
+                var sid = new DirectoryInfo(root).GetAccessControl()
+                    .GetOwner(typeof(System.Security.Principal.SecurityIdentifier)) as System.Security.Principal.SecurityIdentifier;
+                if (sid is not null)
+                {
+                    owners.Add(sid.Value);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log?.Invoke($"root-owner backfill for '{root}': {ex.Message} (left unscoped)");
+            }
+
+            _settings.RootOwners[leaf] = owners;
+        }
+    }
+
     /// <summary>Creates a watch engine from the current settings (exclusions applied).</summary>
     private WatchEngine BuildWatch()
     {
@@ -120,32 +211,44 @@ public sealed class StepWindHost : IDisposable
             exclusions.ExcludePrefix(prefix);
         }
 
-        return new WatchEngine(_store, exclusions, _settings.WatchedFolders, _log);
+        return new WatchEngine(_store, exclusions, _settings.WatchedFolders, _log,
+            canCapture: () => !_storageState.Paused);
     }
 
-    public IpcResponse Handle(IpcRequest request)
+    /// <summary>
+    /// In-process / CLI entry point: full trust inside the engine's own boundary. Real pipe
+    /// connections use the <see cref="CallerContext"/> overload so every privileged or private
+    /// action is authorized against the connected user's identity.
+    /// </summary>
+    public IpcResponse Handle(IpcRequest request) => Handle(request, CallerContext.LocalTrusted);
+
+    public IpcResponse Handle(IpcRequest request, CallerContext caller)
     {
         try
         {
             return request.Command switch
             {
                 IpcCommand.Ping => IpcResponse.Success("\"pong\""),
-                IpcCommand.GetStatus => Ok(BuildStatus()),
-                IpcCommand.GetTimeline => Ok(BuildTimeline(request.Limit)),
-                IpcCommand.GetHistory => Ok(BuildHistory(request.Arg1 ?? "")),
-                IpcCommand.GetRecentFiles => Ok(BuildRecentFiles(request.Limit)),
-                IpcCommand.ReverseOperation => ReverseOperation(request.Arg1 ?? ""),
-                IpcCommand.RestoreVersion => RestoreVersion(request.Arg1 ?? "", request.Arg2),
-                IpcCommand.RunRetention => RunRetentionCommand(),
+                IpcCommand.GetStatus => Ok(BuildStatus(caller)),
+                IpcCommand.GetTimeline => Ok(BuildTimeline(request.Limit, caller)),
+                IpcCommand.GetHistory => GetHistory(request.Arg1 ?? "", caller),
+                IpcCommand.GetRecentFiles => Ok(BuildRecentFiles(request.Limit, caller)),
+                IpcCommand.ReverseOperation => ReverseOperation(request.Arg1 ?? "", caller),
+                IpcCommand.RestoreVersion => RestoreVersion(request.Arg1 ?? "", request.Arg2, caller),
+                IpcCommand.RunRetention => RequirePrivilege(caller) ?? RunRetentionCommand(),
                 IpcCommand.GetSettings => Ok(BuildSettings()),
-                IpcCommand.SetSettings => ApplySettings(request.Arg1 ?? ""),
-                IpcCommand.PurgeHistory => PurgeHistory(request.Arg1 ?? ""),
-                IpcCommand.BrowseVersions => Ok(BrowseVersions(request.Arg1 ?? "", request.Arg2, request.Limit)),
-                IpcCommand.GetVersionContent => GetVersionContent(request.Arg1 ?? ""),
-                IpcCommand.DiffVersions => DiffVersionsCommand(request.Arg1 ?? "", request.Arg2 ?? ""),
-                IpcCommand.CaptureNow => CaptureNowCommand(request.Arg1 ?? ""),
+                IpcCommand.SetSettings => ApplySettings(request.Arg1 ?? "", caller),
+                IpcCommand.PurgeHistory => PurgeHistory(request.Arg1 ?? "", caller),
+                IpcCommand.BrowseVersions => Ok(BrowseVersions(request.Arg1 ?? "", request.Arg2, request.Limit, caller)),
+                IpcCommand.GetVersionContent => GetVersionContent(request.Arg1 ?? "", caller),
+                IpcCommand.DiffVersions => DiffVersionsCommand(request.Arg1 ?? "", request.Arg2 ?? "", caller),
+                IpcCommand.CaptureNow => CaptureNowCommand(request.Arg1 ?? "", caller),
                 _ => IpcResponse.Fail("unsupported command"),
             };
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return IpcResponse.Fail(ex.Message);
         }
         catch (Exception ex)
         {
@@ -153,21 +256,73 @@ public sealed class StepWindHost : IDisposable
         }
     }
 
-    private object BuildStatus()
+    private static IpcResponse? RequirePrivilege(CallerContext caller) =>
+        caller.IsPrivileged ? null : IpcResponse.Fail("This action requires an administrator.");
+
+    // ── authorization: who may see/act on which protected root ──────────────────────────────
+    // A stored relative path's FIRST SEGMENT is its root namespace (folder leaf). Ownership is
+    // recorded per segment; the service maps a segment back to its live folder path so the
+    // "can the caller actually read this folder" safety net can run.
+
+    private string? RootPathForSegment(string firstSegment)
+    {
+        foreach (string root in _settings.WatchedFolders)
+        {
+            if (string.Equals(System.IO.Path.GetFileName(root), firstSegment, StringComparison.OrdinalIgnoreCase))
+            {
+                return root;
+            }
+        }
+
+        return null;
+    }
+
+    private bool CallerCanAccessSegment(CallerContext caller, string firstSegment)
+        => RootAccess.CanAccess(caller, firstSegment, _settings.RootOwners, RootPathForSegment(firstSegment));
+
+    private bool CallerCanAccessRelative(CallerContext caller, string relativePath)
+        => CallerCanAccessSegment(caller, FirstSegment(NormalizeRel(relativePath)));
+
+    private void EnsureCanAccessRelative(CallerContext caller, string relativePath)
+    {
+        if (!CallerCanAccessRelative(caller, relativePath))
+        {
+            throw new UnauthorizedAccessException("You don't have access to this file's history.");
+        }
+    }
+
+    private object BuildStatus(CallerContext caller)
     {
         EngineStatus s = _watch.Status;
+        List<string> folders = AccessibleFolders(caller);
+        StorageState storage = _storageState;
         return new
         {
             FlightRecorder = _flightRecorder is not null,
-            s.WatchedRoots,
+            WatchedRoots = folders.Count,
             s.PendingChanges,
             s.VersionsCaptured,
             s.LastCaptureUtc,
             TotalVersions = _store.Log.All.Count,
             StoreBytes = _store.Blobs.TotalBytes + SafeFileLength(System.IO.Path.Combine(_settings.StoreRoot, "versions.jsonl")),
             ReEncoding = _reEncoding,
-            _settings.WatchedFolders,
+            CapturePaused = storage.Paused,
+            PauseReason = storage.Reason,
+            FreeDiskBytes = storage.FreeBytes,
+            WatchedFolders = folders,
         };
+    }
+
+    /// <summary>The watched folders this caller may see (all of them for a privileged caller).</summary>
+    private List<string> AccessibleFolders(CallerContext caller)
+    {
+        if (caller.IsPrivileged)
+        {
+            return _settings.WatchedFolders;
+        }
+
+        return [.. _settings.WatchedFolders.Where(root =>
+            RootAccess.CanAccess(caller, System.IO.Path.GetFileName(root) ?? root, _settings.RootOwners, root))];
     }
 
     private static long SafeFileLength(string path)
@@ -175,7 +330,7 @@ public sealed class StepWindHost : IDisposable
         try { return File.Exists(path) ? new FileInfo(path).Length : 0; } catch { return 0; }
     }
 
-    private List<TimelineEntry> BuildTimeline(int limit)
+    private List<TimelineEntry> BuildTimeline(int limit, CallerContext caller)
     {
         FlightRecorder? recorder = _flightRecorder; // local copy — the toggle can swap it
         if (recorder is null)
@@ -183,9 +338,22 @@ public sealed class StepWindHost : IDisposable
             return [];
         }
 
+        WatchEngine watch = _watch; // local — ApplySettings can swap it under _watchLock
+        var access = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase); // per-call dir cache
         var entries = new List<TimelineEntry>();
         foreach (FileOperation op in recorder.Recent(limit))
         {
+            // Privacy + integrity: a non-privileged caller only sees operations whose file lives
+            // somewhere they can access, so they never learn about — nor receive a reverse handle
+            // for — another user's file activity. This closes the cross-user timeline-read AND the
+            // cross-user "undo someone else's move as SYSTEM" window in one place: no handle out,
+            // no reverse in. It deliberately still shows the user their OWN moves anywhere on disk
+            // (the whole point of the flight recorder), not just inside protected folders.
+            if (!CallerCanSeeOperation(caller, op, watch, access))
+            {
+                continue;
+            }
+
             entries.Add(new TimelineEntry
             {
                 Kind = op.Kind.ToString(),
@@ -195,11 +363,106 @@ public sealed class StepWindHost : IDisposable
                 NewPath = op.NewPath,
                 ByProcess = op.ByProcess,
                 Reversible = op.IsReversible,
-                OperationId = EncodeOp(op),
+                OperationId = FlightRecorder.OpToken(op),
+                RecoverableVersionId = RecoverableVersionFor(op, watch),
             });
         }
 
         return entries;
+    }
+
+    /// <summary>
+    /// Whether a caller may see a whole-machine operation. Privileged callers see everything;
+    /// others see an operation when its file is one they can reach — either inside a protected
+    /// folder they own, or a path their own token can read (so a user still sees their OWN moves
+    /// anywhere on disk, but never another user's activity). <paramref name="dirAccess"/> caches
+    /// the per-directory impersonated read check for the duration of one timeline build.
+    /// </summary>
+    private bool CallerCanSeeOperation(CallerContext caller, FileOperation op, WatchEngine watch,
+        Dictionary<string, bool> dirAccess)
+    {
+        if (caller.IsPrivileged)
+        {
+            return true;
+        }
+
+        foreach (string? path in new[] { op.NewPath, op.OldPath })
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                continue;
+            }
+
+            // Owned protected folder — cheap, and works even for a deleted file (path-only).
+            string? rel = watch.RelativeToRoot(path);
+            if (rel is not null && CallerCanAccessRelative(caller, rel))
+            {
+                return true;
+            }
+
+            // Otherwise: can the caller's own token read the file's folder? (Cached per dir.)
+            string? dir = TryGetDirectory(path);
+            if (dir is null)
+            {
+                continue;
+            }
+
+            if (!dirAccess.TryGetValue(dir, out bool canRead))
+            {
+                canRead = RootAccess.CallerCanReadDirectory(caller, dir);
+                dirAccess[dir] = canRead;
+            }
+
+            if (canRead)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string? TryGetDirectory(string path)
+    {
+        try { return System.IO.Path.GetDirectoryName(path); }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// For a Delete whose file lived in a protected folder and has stored history, returns the
+    /// VersionId of its latest saved version so the timeline can offer one-click delete-undo. A
+    /// move/rename is undone by moving the item back (no stored content needed) — this is only
+    /// for deletes, where the bytes are gone and recovery must come from the version store.
+    /// Returns null when there's nothing to recover, so the GUI can be honest instead of showing
+    /// a dead button.
+    /// </summary>
+    private string? RecoverableVersionFor(FileOperation op, WatchEngine watch)
+    {
+        if (op.Kind != OperationKind.Delete || op.IsDirectory || string.IsNullOrEmpty(op.OldPath))
+        {
+            return null;
+        }
+
+        return RecoverableVersionIdFor(op.OldPath, watch);
+    }
+
+    /// <summary>
+    /// The VersionId of the latest saved version of the file at <paramref name="absolutePath"/>,
+    /// or null if it wasn't inside a protected folder or has no history. Factored out so the
+    /// delete-undo mapping is unit-testable without a live flight recorder (which needs admin/ETW).
+    /// </summary>
+    internal string? RecoverableVersionIdFor(string absolutePath) => RecoverableVersionIdFor(absolutePath, _watch);
+
+    private string? RecoverableVersionIdFor(string absolutePath, WatchEngine watch)
+    {
+        string? rel = watch.RelativeToRoot(absolutePath);
+        if (rel is null)
+        {
+            return null; // not inside any currently-protected folder
+        }
+
+        FileVersion? latest = _store.Log.LatestFor(NormalizeRel(rel));
+        return latest is null ? null : $"{latest.RelativePath}|{latest.CapturedUtc.Ticks}";
     }
 
     private object BuildSettings() => new
@@ -211,6 +474,8 @@ public sealed class StepWindHost : IDisposable
         _settings.EncryptionEnabled,
         _settings.FirstRunCompleted,
         _settings.TimelineProtectedOnly,
+        _settings.MinFreeDiskBytes,
+        _settings.MaxStoreBytes,
         RetentionKeepAllHours = _settings.Retention.KeepAllHours,
         RetentionHourlyDays = _settings.Retention.HourlyDays,
         RetentionDailyDays = _settings.Retention.DailyDays,
@@ -227,6 +492,8 @@ public sealed class StepWindHost : IDisposable
         public bool? EncryptionEnabled { get; set; }
         public bool? FlightRecorderEnabled { get; set; }
         public bool? TimelineProtectedOnly { get; set; }
+        public long? MinFreeDiskBytes { get; set; }
+        public long? MaxStoreBytes { get; set; }
         public int? RetentionKeepAllHours { get; set; }
         public int? RetentionHourlyDays { get; set; }
         public int? RetentionDailyDays { get; set; }
@@ -234,7 +501,7 @@ public sealed class StepWindHost : IDisposable
         public int? RetentionMaxVersionsPerFile { get; set; }
     }
 
-    private IpcResponse ApplySettings(string json)
+    private IpcResponse ApplySettings(string json, CallerContext caller)
     {
         SettingsPatch? patch = JsonSerializer.Deserialize<SettingsPatch>(json);
         if (patch is null)
@@ -272,7 +539,15 @@ public sealed class StepWindHost : IDisposable
                 .Select(p => p.TrimEnd('\\', '/'))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
+
+            IpcResponse? denied = AuthorizeFolderChange(caller, _settings.WatchedFolders, cleaned);
+            if (denied is not null)
+            {
+                return denied;
+            }
+
             foldersChanged = !cleaned.SequenceEqual(_settings.WatchedFolders, StringComparer.OrdinalIgnoreCase);
+            RegisterOwnership(caller, _settings.WatchedFolders, cleaned);
             _settings.WatchedFolders = cleaned;
 
             // A human decided the folder set (add, remove, or remove-all). From here on the
@@ -315,6 +590,25 @@ public sealed class StepWindHost : IDisposable
         if (patch.TimelineProtectedOnly is bool tpo)
         {
             _settings.TimelineProtectedOnly = tpo;
+        }
+
+        bool storageChanged = false;
+        if (patch.MinFreeDiskBytes is long minFree && minFree != _settings.MinFreeDiskBytes)
+        {
+            _settings.MinFreeDiskBytes = Math.Max(0, minFree);
+            storageChanged = true;
+        }
+
+        if (patch.MaxStoreBytes is long maxStore && maxStore != _settings.MaxStoreBytes)
+        {
+            _settings.MaxStoreBytes = Math.Max(0, maxStore);
+            storageChanged = true;
+        }
+
+        if (storageChanged)
+        {
+            _storage = new StorageGuard(_settings.StoreRoot, _settings.MinFreeDiskBytes, _settings.MaxStoreBytes);
+            RefreshStorageState();
         }
 
         // Retention is user-configurable; clamp to sane floors so a typo can't nuke history
@@ -371,7 +665,7 @@ public sealed class StepWindHost : IDisposable
         return Ok(BuildSettings());
     }
 
-    private List<VersionEntry> BuildHistory(string pathOrRelative)
+    private IpcResponse GetHistory(string pathOrRelative, CallerContext caller)
     {
         // Accept either a store-relative path ("Documents/report.txt") or an absolute file
         // path (from the GUI's Browse button) — resolve the latter against the watched roots.
@@ -381,6 +675,88 @@ public sealed class StepWindHost : IDisposable
             relativePath = _watch.RelativeToRoot(pathOrRelative) ?? pathOrRelative;
         }
 
+        EnsureCanAccessRelative(caller, relativePath);
+        return Ok(BuildHistory(relativePath));
+    }
+
+    /// <summary>
+    /// Guards a watched-folder change against privilege escalation and namespace collision:
+    ///  • a non-privileged caller may only ADD a folder its own token can read (else it could
+    ///    use the SYSTEM service to capture — then read — files it has no rights to);
+    ///  • a non-privileged caller may only REMOVE a folder it owns (no un-protecting someone
+    ///    else's folder);
+    ///  • no ADD may collide on the store namespace leaf with a kept folder at a different path
+    ///    (two "Documents" from different drives would merge different files under one history).
+    /// Returns a failure response to reject the change, or null to allow it.
+    /// </summary>
+    private IpcResponse? AuthorizeFolderChange(CallerContext caller, List<string> oldFolders, List<string> newFolders)
+    {
+        var oldSet = new HashSet<string>(oldFolders, StringComparer.OrdinalIgnoreCase);
+        var newSet = new HashSet<string>(newFolders, StringComparer.OrdinalIgnoreCase);
+
+        foreach (string added in newFolders.Where(f => !oldSet.Contains(f)))
+        {
+            string leaf = System.IO.Path.GetFileName(added) ?? added;
+
+            // Collision with a KEPT folder at a different path.
+            string? clash = newFolders.FirstOrDefault(f =>
+                !f.Equals(added, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(System.IO.Path.GetFileName(f), leaf, StringComparison.OrdinalIgnoreCase));
+            if (clash is not null)
+            {
+                return IpcResponse.Fail(
+                    $"Can't protect '{added}': another protected folder is also named '{leaf}' ('{clash}'). " +
+                    "Two folders with the same name would share one history — rename one, or protect a parent folder.");
+            }
+
+            if (!caller.IsPrivileged && !RootAccess.CallerCanReadDirectory(caller, added))
+            {
+                return IpcResponse.Fail($"Can't protect '{added}': you don't have permission to read that folder.");
+            }
+        }
+
+        if (!caller.IsPrivileged)
+        {
+            foreach (string removed in oldFolders.Where(f => !newSet.Contains(f)))
+            {
+                string leaf = System.IO.Path.GetFileName(removed) ?? removed;
+                if (!RootAccess.CanAccess(caller, leaf, _settings.RootOwners, removed))
+                {
+                    return IpcResponse.Fail($"Can't stop protecting '{removed}': it belongs to another user.");
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Records the caller as owner of newly added roots (so only they, or an admin, can read/purge that history).</summary>
+    private void RegisterOwnership(CallerContext caller, List<string> oldFolders, List<string> newFolders)
+    {
+        if (caller.UserSid is not { Length: > 0 } sid)
+        {
+            return; // in-process/unknown caller — nothing to attribute
+        }
+
+        var oldSet = new HashSet<string>(oldFolders, StringComparer.OrdinalIgnoreCase);
+        foreach (string added in newFolders.Where(f => !oldSet.Contains(f)))
+        {
+            string leaf = System.IO.Path.GetFileName(added) ?? added;
+            if (!_settings.RootOwners.TryGetValue(leaf, out List<string>? owners))
+            {
+                owners = [];
+                _settings.RootOwners[leaf] = owners;
+            }
+
+            if (!owners.Contains(sid, StringComparer.OrdinalIgnoreCase))
+            {
+                owners.Add(sid);
+            }
+        }
+    }
+
+    private List<VersionEntry> BuildHistory(string relativePath)
+    {
         var list = new List<VersionEntry>();
         foreach (FileVersion v in _store.Log.History(relativePath).OrderByDescending(v => v.CapturedUtc))
         {
@@ -404,18 +780,20 @@ public sealed class StepWindHost : IDisposable
     /// everything beneath) then files. Root ("") lists the top-level protected folders that
     /// actually have history. Purely a read over the version log — cheap and lock-snapshotted.
     /// </summary>
-    private List<BrowseEntry> BrowseVersions(string prefix, string? query, int limit)
+    private List<BrowseEntry> BrowseVersions(string prefix, string? query, int limit, CallerContext caller)
     {
         string basePrefix = prefix.Replace('\\', '/').Trim('/');
         int cap = limit <= 0 ? 500 : Math.Min(limit, 2000);
 
-        // Latest version per distinct file, restricted to what's under the prefix.
+        // Latest version per distinct file, restricted to what's under the prefix AND to the
+        // roots this caller may access — so browse/search never reveals another user's files.
         var files = _store.Log.All
             .GroupBy(v => v.RelativePath, StringComparer.OrdinalIgnoreCase)
             .Select(g => (Path: g.Key, Count: g.Count(), Last: g.Max(v => v.CapturedUtc)))
             .Where(f => basePrefix.Length == 0
                 || f.Path.Equals(basePrefix, StringComparison.OrdinalIgnoreCase)
                 || f.Path.StartsWith(basePrefix + "/", StringComparison.OrdinalIgnoreCase))
+            .Where(f => CallerCanAccessRelative(caller, f.Path))
             .ToList();
 
         if (!string.IsNullOrWhiteSpace(query))
@@ -518,7 +896,7 @@ public sealed class StepWindHost : IDisposable
     /// Throws (caught by Handle's outer try/catch → a clean IpcResponse.Fail) on anything that
     /// doesn't resolve, so every failure mode reaches the caller as one readable error string.
     /// </summary>
-    private ResolvedContent ResolveSelector(string selector)
+    private ResolvedContent ResolveSelector(string selector, CallerContext caller)
     {
         if (string.IsNullOrWhiteSpace(selector))
         {
@@ -528,7 +906,8 @@ public sealed class StepWindHost : IDisposable
         if (selector.StartsWith("current:", StringComparison.OrdinalIgnoreCase))
         {
             string rel = NormalizeRel(selector[8..]);
-            string absolute = ResolveOriginalPath(rel);
+            EnsureCanAccessRelative(caller, rel);
+            string absolute = ResolveOriginalPath(rel, caller);
             if (!File.Exists(absolute))
             {
                 throw new FileNotFoundException($"no current file at '{rel}' (looked for {absolute})");
@@ -560,6 +939,7 @@ public sealed class StepWindHost : IDisposable
         if (selector.StartsWith("latest:", StringComparison.OrdinalIgnoreCase))
         {
             string rel = NormalizeRel(selector[7..]);
+            EnsureCanAccessRelative(caller, rel);
             version = _store.Log.LatestFor(rel) ?? throw new FileNotFoundException($"no saved history for '{rel}'");
         }
         else
@@ -572,6 +952,7 @@ public sealed class StepWindHost : IDisposable
             }
 
             string rel = selector[..sep];
+            EnsureCanAccessRelative(caller, rel);
             version = _store.Log.History(rel).FirstOrDefault(v => v.CapturedUtc.Ticks == ticks)
                 ?? throw new FileNotFoundException($"version not found: {selector}");
         }
@@ -608,9 +989,9 @@ public sealed class StepWindHost : IDisposable
 
     private static string NormalizeRel(string rel) => rel.Replace('\\', '/').TrimStart('/');
 
-    private IpcResponse GetVersionContent(string selector)
+    private IpcResponse GetVersionContent(string selector, CallerContext caller)
     {
-        ResolvedContent r = ResolveSelector(selector);
+        ResolvedContent r = ResolveSelector(selector, caller);
         var result = new ContentResult
         {
             RelativePath = r.RelativePath,
@@ -624,10 +1005,10 @@ public sealed class StepWindHost : IDisposable
         return Ok(result);
     }
 
-    private IpcResponse DiffVersionsCommand(string oldSelector, string newSelector)
+    private IpcResponse DiffVersionsCommand(string oldSelector, string newSelector, CallerContext caller)
     {
-        ResolvedContent oldSide = ResolveSelector(oldSelector);
-        ResolvedContent newSide = ResolveSelector(newSelector);
+        ResolvedContent oldSide = ResolveSelector(oldSelector, caller);
+        ResolvedContent newSide = ResolveSelector(newSelector, caller);
 
         string diffText;
         bool binary = oldSide.IsBinary || newSide.IsBinary;
@@ -668,7 +1049,7 @@ public sealed class StepWindHost : IDisposable
     /// and RestoreVersion to undo if it went wrong. Accepts an absolute path (must resolve
     /// under a watched root) or an already-relative "Folder/name.ext" path.
     /// </summary>
-    private IpcResponse CaptureNowCommand(string pathOrRelative)
+    private IpcResponse CaptureNowCommand(string pathOrRelative, CallerContext caller)
     {
         string relative;
         string absolute;
@@ -681,8 +1062,10 @@ public sealed class StepWindHost : IDisposable
         else
         {
             relative = NormalizeRel(pathOrRelative);
-            absolute = ResolveOriginalPath(relative);
+            absolute = ResolveOriginalPath(relative, caller);
         }
+
+        EnsureCanAccessRelative(caller, relative);
 
         if (!File.Exists(absolute))
         {
@@ -701,10 +1084,11 @@ public sealed class StepWindHost : IDisposable
     }
 
     /// <summary>Distinct protected files with history, most-recently-changed first (quick list).</summary>
-    private List<RecentFileEntry> BuildRecentFiles(int limit)
+    private List<RecentFileEntry> BuildRecentFiles(int limit, CallerContext caller)
     {
         return [.. _store.Log.All
             .GroupBy(v => v.RelativePath, StringComparer.OrdinalIgnoreCase)
+            .Where(g => CallerCanAccessRelative(caller, g.Key))
             .Select(g => new RecentFileEntry
             {
                 RelativePath = g.Key,
@@ -715,20 +1099,39 @@ public sealed class StepWindHost : IDisposable
             .Take(limit <= 0 ? 100 : limit)];
     }
 
-    private IpcResponse ReverseOperation(string opId)
+    private IpcResponse ReverseOperation(string opId, CallerContext caller)
     {
-        FileOperation? op = DecodeOp(opId);
-        if (op is null)
+        // Unforgeable: opId is an opaque handle into the flight recorder's in-memory ring, NOT
+        // the operation's data. The server re-derives the real paths from its OWN entry, so a
+        // client can never craft "move THIS to THERE as SYSTEM". An unknown/expired handle just
+        // matches nothing.
+        FileRecorderLookup lookup = FindOperation(opId);
+        if (lookup.Op is null)
         {
-            return IpcResponse.Fail("operation not found");
+            return IpcResponse.Fail("operation not found (it may have aged out of the timeline)");
         }
 
-        ReverseResult r = OperationReverser.Reverse(op, _fs);
+        // A non-privileged caller may only reverse operations touching files they can reach —
+        // this is what stops one local user undoing another user's move via the SYSTEM service.
+        if (!CallerCanSeeOperation(caller, lookup.Op, _watch, new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)))
+        {
+            return IpcResponse.Fail("You don't have access to reverse this operation.");
+        }
+
+        ReverseResult r = OperationReverser.Reverse(lookup.Op, _fs);
         return r.Success ? IpcResponse.Success(JsonSerializer.Serialize(new { r.Message, r.RestoredPath }))
                          : IpcResponse.Fail(r.Message);
     }
 
-    private IpcResponse RestoreVersion(string versionId, string? destinationOverride)
+    private readonly record struct FileRecorderLookup(FileOperation? Op);
+
+    private FileRecorderLookup FindOperation(string opId)
+    {
+        FlightRecorder? recorder = _flightRecorder;
+        return new FileRecorderLookup(recorder?.Find(opId));
+    }
+
+    private IpcResponse RestoreVersion(string versionId, string? destinationOverride, CallerContext caller)
     {
         int sep = versionId.LastIndexOf('|');
         if (sep <= 0 || !long.TryParse(versionId[(sep + 1)..], out long ticks))
@@ -737,19 +1140,25 @@ public sealed class StepWindHost : IDisposable
         }
 
         string rel = versionId[..sep];
+        EnsureCanAccessRelative(caller, rel);
+
         FileVersion? version = _store.Log.History(rel).FirstOrDefault(v => v.CapturedUtc.Ticks == ticks);
         if (version is null)
         {
             return IpcResponse.Fail("version not found");
         }
 
-        // Default destination: back under the watched root it came from.
-        string dest = destinationOverride ?? ResolveOriginalPath(rel);
+        // destinationOverride is honored ONLY for a privileged/in-process caller. A pipe client
+        // must not be able to steer a SYSTEM write to an arbitrary path — the restore always
+        // lands back under the file's own root (or, if that's gone, a location the caller owns).
+        string dest = caller.IsPrivileged && !string.IsNullOrEmpty(destinationOverride)
+            ? destinationOverride
+            : ResolveOriginalPath(rel, caller);
         string written = _store.RestoreToSafePath(version, dest);
         return IpcResponse.Success(JsonSerializer.Serialize(new { RestoredPath = written }));
     }
 
-    private string ResolveOriginalPath(string relativePath)
+    private string ResolveOriginalPath(string relativePath, CallerContext caller)
     {
         // relativePath is "<watchedFolderName>/rest…"; map back to the actual root.
         int slash = relativePath.IndexOf('/');
@@ -763,19 +1172,52 @@ public sealed class StepWindHost : IDisposable
             }
         }
 
-        // The folder is no longer protected (or was renamed), so its original root is
-        // unknown. Land the restore somewhere every interactive user can actually open —
-        // NOT inside the store, which is ACL'd to SYSTEM+Admins and would lock the user
-        // out of their own recovered file.
-        string publicDocs = Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments);
-        if (string.IsNullOrEmpty(publicDocs))
+        // The folder is no longer protected (or was renamed), so its original root is unknown.
+        // Land the recovered file somewhere the RIGHT person can open — never the ACL-locked
+        // store, and never world-readable Public Documents for a real (non-privileged) user's
+        // private data. A privileged/in-process caller keeps the Public Documents fallback
+        // (admins can read everything anyway, and it keeps the CLI/tests behavior stable).
+        string baseDir;
+        if (caller.IsPrivileged)
         {
-            publicDocs = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StepWind");
+            baseDir = Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments);
+            if (string.IsNullOrEmpty(baseDir))
+            {
+                baseDir = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StepWind");
+            }
+        }
+        else
+        {
+            // Impersonate the caller to land the file in THEIR profile, readable only by them.
+            baseDir = CallerProfileDocuments(caller)
+                ?? System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StepWind", "Restored-Pending");
         }
 
-        return System.IO.Path.Combine(publicDocs, "StepWind Restored",
+        return System.IO.Path.Combine(baseDir, "StepWind Restored",
             relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar));
+    }
+
+    /// <summary>The connected caller's own Documents folder (resolved under impersonation), or null.</summary>
+    private static string? CallerProfileDocuments(CallerContext caller)
+    {
+        if (caller.PipeStream is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            string? docs = null;
+            caller.PipeStream.RunAsClient(() =>
+                docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+            return string.IsNullOrEmpty(docs) ? null : docs;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private IpcResponse RunRetentionCommand()
@@ -793,11 +1235,26 @@ public sealed class StepWindHost : IDisposable
     /// Runs exclusively with captures/GC, then sweeps unreferenced blobs so the disk space
     /// actually comes back. Purged versions are unrecoverable — the GUI confirms first.
     /// </summary>
-    private IpcResponse PurgeHistory(string selector)
+    private IpcResponse PurgeHistory(string selector, CallerContext caller)
     {
         if (string.IsNullOrWhiteSpace(selector))
         {
             return IpcResponse.Fail("nothing to purge — empty selector");
+        }
+
+        // Machine-wide destruction is privileged-only. "*" wipes everyone's history; "unprotected"
+        // sweeps every user's orphaned history — neither is a non-admin's to trigger.
+        if (selector == "*" || selector.Equals("unprotected", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!caller.IsPrivileged)
+            {
+                return IpcResponse.Fail("Purging all history requires an administrator.");
+            }
+        }
+        else
+        {
+            // Targeted prefix purge: only for a root the caller can access (their own history).
+            EnsureCanAccessRelative(caller, selector.Replace('\\', '/').TrimStart('/'));
         }
 
         (int removedVersions, int sweptBlobs) = _store.RunExclusive(() =>
@@ -910,23 +1367,6 @@ public sealed class StepWindHost : IDisposable
 
     private static IpcResponse Ok(object payload) => IpcResponse.Success(JsonSerializer.Serialize(payload));
 
-    // Operations are encoded self-contained so the GUI can round-trip them without the server
-    // holding per-connection state.
-    private static string EncodeOp(FileOperation op)
-        => Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(op));
-
-    private static FileOperation? DecodeOp(string id)
-    {
-        try
-        {
-            return JsonSerializer.Deserialize<FileOperation>(Convert.FromBase64String(id));
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
     private static IEnumerable<string> FixedNtfsVolumes()
     {
         foreach (DriveInfo d in DriveInfo.GetDrives())
@@ -944,6 +1384,7 @@ public sealed class StepWindHost : IDisposable
     {
         _lifetime.Cancel();
         _retentionTimer.Dispose();
+        _storageTimer.Dispose();
         lock (_watchLock)
         {
             _watch.Dispose();

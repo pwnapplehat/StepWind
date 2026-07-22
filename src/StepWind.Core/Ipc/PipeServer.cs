@@ -16,12 +16,12 @@ namespace StepWind.Core.Ipc;
 [SupportedOSPlatform("windows")]
 public sealed class PipeServer : IDisposable
 {
-    private readonly Func<IpcRequest, IpcResponse> _handler;
+    private readonly Func<IpcRequest, CallerContext, IpcResponse> _handler;
     private readonly Action<string>? _log;
     private readonly CancellationTokenSource _cts = new();
     private Task? _loop;
 
-    public PipeServer(Func<IpcRequest, IpcResponse> handler, Action<string>? log = null)
+    public PipeServer(Func<IpcRequest, CallerContext, IpcResponse> handler, Action<string>? log = null)
     {
         _handler = handler;
         _log = log;
@@ -68,7 +68,7 @@ public sealed class PipeServer : IDisposable
             IpcRequest? request = JsonSerializer.Deserialize<IpcRequest>(line);
             response = request is null ? IpcResponse.Fail("bad request")
                 : request.Version != IpcProtocol.Version ? IpcResponse.Fail("version mismatch")
-                : _handler(request);
+                : _handler(request, ResolveCaller(server));
         }
         catch (Exception ex)
         {
@@ -76,6 +76,41 @@ public sealed class PipeServer : IDisposable
         }
 
         await writer.WriteLineAsync(JsonSerializer.Serialize(response));
+    }
+
+    /// <summary>
+    /// Identifies the connected client by impersonating the pipe. The elevated service acts on
+    /// this identity's behalf, so authorization (who may read/reverse/purge which data) is
+    /// decided from it — not from anything the client puts in the request. If identity can't be
+    /// resolved, the caller is treated as an UNPRIVILEGED unknown (fail-closed for privilege).
+    /// </summary>
+    private CallerContext ResolveCaller(NamedPipeServerStream server)
+    {
+        try
+        {
+            string? sid = null, name = null;
+            bool isAdmin = false;
+            server.RunAsClient(() =>
+            {
+                using WindowsIdentity id = WindowsIdentity.GetCurrent();
+                sid = id.User?.Value;
+                name = id.Name;
+                isAdmin = id.IsSystem || new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator);
+            });
+
+            return new CallerContext
+            {
+                UserSid = sid,
+                UserName = name,
+                IsAdministrator = isAdmin,
+                PipeStream = server,
+            };
+        }
+        catch (Exception ex)
+        {
+            _log?.Invoke("caller identity resolve failed (treating as unprivileged): " + ex.Message);
+            return new CallerContext { UserName = "(unknown)" };
+        }
     }
 
     private static NamedPipeServerStream CreatePipe()

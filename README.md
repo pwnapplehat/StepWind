@@ -40,9 +40,13 @@ is reversed with **one click**, instantly, needing no stored copy of your data.
 
 **2. A time machine for the folders you care about.** Documents, Desktop, and your own
 picks get continuous version history. Every save is captured as content-defined,
-deduplicated, compressed chunks (the same technique restic/borg use), so scrolling a file
-back to any earlier version — even after it was overwritten *and* deleted — is instant, and
-a lightly-edited 2 GB file doesn't cost 2 GB per save.
+deduplicated, compressed chunks (the same technique restic/borg use), streamed one chunk at a
+time so a 2 GB file is never held in memory, so scrolling a file back to any earlier version —
+even after it was overwritten *and* deleted — is instant, and a lightly-edited 2 GB file
+doesn't cost 2 GB per save. A brand-new file is captured within a moment of being created, so
+even a file created and deleted seconds later can still be brought back. When a deleted file
+has saved history, the timeline offers a one-click **Restore**; when it genuinely has none, it
+says so plainly instead of pretending.
 
 ## A safety net for AI coding agents too
 
@@ -90,11 +94,22 @@ looks wrong. Disconnecting removes exactly our entry and nothing else.
   OneDrive online-only files are skipped (versioning a placeholder would force a full download).
   Files held under an *exclusive* lock (e.g. an open Outlook PST) are captured when the app
   releases them / on the next reconcile — StepWind doesn't force snapshots of locked files.
-- **Honest architecture**: an elevated background **service** does the privileged work
-  (journal + ETW); the tray **GUI** runs unelevated and talks to it over a local, ACL'd pipe.
-- **Fully automatic, silent updates** — because the service already runs as SYSTEM, it
-  checks GitHub for new releases, verifies the setup's SHA-256, and installs it with **zero
-  UAC prompts**. Set-and-forget, like it should be.
+- **Honest architecture, authorized per user**: an elevated background **service** does the
+  privileged work (journal + ETW); the tray **GUI** runs unelevated and talks to it over a
+  local, ACL'd pipe. The service authorizes every private or destructive request against the
+  user who made it — on a shared PC one account can't read, restore, or purge another
+  account's history, undo handles can't be forged into arbitrary file moves, and wiping all
+  history takes an administrator.
+- **Never fills your disk, never fails silently** — if the drive holding your history runs
+  low on space, capturing pauses loudly (the status says so), thins old versions to win space
+  back, and resumes on its own once there's room. It won't quietly stop protecting you the way
+  Windows File History was known to.
+- **Fail-closed, verified updates** — the SYSTEM service checks GitHub for new releases and
+  installs an update **only** if it passes a SHA-256 checksum matched to its filename **and** a
+  trusted Authenticode code signature; a release missing either is refused rather than run. The
+  installer backs up the current version and rolls back automatically if a new build won't
+  start, so an update can never leave you unprotected. (Until releases are code-signed, silent
+  auto-install stays disabled — the safe default.)
 
 ## A UI designed for the job
 
@@ -149,7 +164,7 @@ tests/                 deterministic Core tests
 
 ## Verified
 
-- **164 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+- **217 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
   integrity, encryption round-trip & tamper rejection, DPAPI key stability, live encryption
   toggling (mixed-store reads, background re-encode convergence in both directions,
   interrupted-migration recovery, storage byte tracking, the IPC toggle end-to-end), USN
@@ -162,9 +177,14 @@ tests/                 deterministic Core tests
   (incl. cloud placeholders), watch capture, the full IPC capture→history→restore round-trip,
   the unified-diff engine (fuzzed against a reference LCS; hunk-header correctness; large
   compound edits), the AI/MCP surface (checkpoint→edit→diff→restore agent workflow, binary/
-  oversize honesty, selector errors), and the MCP client auto-configurator (merge preserves
+  oversize honesty, selector errors), the MCP client auto-configurator (merge preserves
   every existing key, JSONC/broken files refused untouched, idempotent installs, TOML block
-  surgery, backups, BOM preservation).
+  surgery, backups, BOM preservation), **pre-delete capture** (a create+delete inside the
+  quiet window still leaves a restorable version), **per-user authorization** (one account
+  can't read/restore/purge another's history, forged undo handles are rejected, machine-wide
+  wipe needs admin), the **fail-closed updater** (missing/mismatched checksum refused,
+  filename-matched sums, unsigned setup never launched), and the **disk-full guard**
+  (capture pauses and resumes around a free-space floor and store quota).
 - **Real-hardware E2E** (elevated): a scripted create/rename/move/delete is reconstructed
   from the live journal, the move is reversed (folder back in one click), and a version is
   restored byte-exact after overwrite+delete — all through the production classes. The
@@ -179,9 +199,10 @@ tests/                 deterministic Core tests
 Download **StepWind-x.y.z-setup.exe** from
 [Releases](https://github.com/pwnapplehat/StepWind/releases) and run it. The installer sets
 up the background service (auto-start), starts protecting immediately, and launches the tray
-app (which then starts with Windows). From then on StepWind keeps itself up to date
-automatically and silently — no reinstalling, no prompts. Uninstall from Settings → Apps like
-any program; your version history is left intact.
+app (which then starts with Windows). StepWind checks for updates and applies them only when
+they pass its checksum + code-signature verification, rolling back automatically if a new
+build won't start. Uninstall from Settings → Apps like any program; your version history is
+left intact.
 
 Windows 10 (1809+) or Windows 11, an NTFS drive.
 

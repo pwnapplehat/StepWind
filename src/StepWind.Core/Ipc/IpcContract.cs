@@ -75,6 +75,14 @@ public sealed record TimelineEntry
 
     /// <summary>Opaque id the GUI passes back to ReverseOperation.</summary>
     public required string OperationId { get; init; }
+
+    /// <summary>
+    /// For a Delete of a file that lived in a protected folder and has stored version history:
+    /// the VersionId of its most recent saved version, which the GUI can restore in one click
+    /// (moves/renames undo via <see cref="OperationId"/>; deletes recover from the version store).
+    /// Null when the deleted file has no recoverable version — the GUI then says so honestly.
+    /// </summary>
+    public string? RecoverableVersionId { get; init; }
 }
 
 /// <summary>A stored version as sent to the GUI.</summary>

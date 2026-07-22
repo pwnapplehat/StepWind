@@ -239,6 +239,12 @@ body {
   animation: pulse 2.6s var(--ease) infinite;
 }
 .dot.bad { background: var(--danger); }
+.dot.warn { background: var(--warn); }
+.dot.warn::after {
+  content: ""; position: absolute; inset: -3px; border-radius: 99px;
+  border: 1.5px solid var(--warn); opacity: 0;
+  animation: pulse 2.6s var(--ease) infinite;
+}
 @keyframes pulse {
   0% { transform: scale(0.6); opacity: 0.7; }
   70%, 100% { transform: scale(1.5); opacity: 0; }
@@ -422,6 +428,14 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
   transition: opacity 0.16s var(--ease), transform 0.16s var(--ease);
 }
 .tl-row:hover .tl-undo { opacity: 1; transform: none; }
+/* Delete recovery is the scariest, most valued action — keep it always visible, not hover-only,
+   and also reveal Undo when its row has keyboard focus (accessibility: not mouse-only). */
+.tl-row:focus-within .tl-undo { opacity: 1; transform: none; }
+.tl-restore { flex-shrink: 0; }
+.tl-norecover {
+  flex-shrink: 0; font-size: 11px; color: var(--text-3);
+  font-style: italic; white-space: nowrap;
+}
 
 /* per-kind colors */
 .k-Create .tl-rail { background: var(--k-create); } .k-Create .tl-badge { color: var(--k-create); background: rgba(52, 211, 153, 0.12); }

@@ -6,6 +6,36 @@ All notable changes to StepWind are documented here.
 
 Initial release — an undo button for your whole PC (and a safety net for AI coding agents).
 
+- **Delete-undo is real, end to end.** A newly created file is now baselined within a moment of
+  creation (a fast create-capture path), so a file created and deleted inside the debounce quiet
+  window still leaves a restorable version instead of nothing. The timeline shows a one-click
+  **Restore** on a deleted file that has saved history, and an honest "Not saved" tag when it
+  genuinely has none — never a dead button.
+- **Per-user authorization on the service pipe.** The elevated service now identifies the
+  connecting user (pipe impersonation) and authorizes every private or destructive action
+  against them: one local account can't read, restore, browse, or purge another account's file
+  history; the machine-wide timeline only shows a caller operations inside folders they can
+  access; wiping all history (or all orphaned history) requires an administrator. Ownership is
+  recorded when a folder is added and backfilled from the folder's on-disk owner for existing
+  installs, with a live "can this user actually read the folder" fallback so no one is locked
+  out of history for folders they can already open.
+- **Undo handles can no longer be forged.** A timeline "undo" used to carry a self-contained,
+  client-supplied operation that the SYSTEM service would act on — a crafted request could move
+  any file anywhere. The timeline now hands out an opaque handle into the recorder's in-memory
+  ring; the service re-derives the real paths from its own entry and rejects any handle it
+  didn't issue. Restores ignore a caller-supplied destination for unprivileged callers, and a
+  recovered file from a no-longer-protected folder lands in the requesting user's own profile
+  rather than a world-readable public folder. Protecting two folders that share a name is
+  refused, since they would merge different files under one history.
+- **Never fills the disk; never fails silently.** A storage guard pauses capturing when the
+  store's drive drops below a free-space floor (default 1 GiB) or an optional store-size cap is
+  hit, runs an emergency retention prune to win space back, and resumes automatically once
+  there's room — surfacing a loud "Capturing paused" status the whole time. Skipped changes are
+  re-captured by the reconcile pass, so nothing is lost, only deferred.
+- **Fail-closed, verified, rollback-safe updates** (see the update entry below).
+- **Streaming capture.** Files are chunked and stored one chunk at a time, so peak memory is a
+  single chunk regardless of file size — a multi-GB file is never buffered whole inside the
+  SYSTEM service.
 - **User-managed exclusions (Protected folders → Excluded).** You can now exclude a subfolder
   or path inside a protected folder from versioning — heavy build outputs, datasets, or caches
   you don't want kept. The engine already honored an exclusion list (and still auto-skips
@@ -146,9 +176,10 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   the folder was removed** — on a large folder it ground on for minutes, so versions kept
   appearing with zero folders protected. The scan now aborts the instant the folder set
   changes (regression test pins it).
-  Restores of files whose folder is no longer protected land in
-  `Public Documents\StepWind Restored` — an earlier build dropped them inside the
-  ACL-locked store where a standard user couldn't open their own recovered file.
+  Restores of files whose folder is no longer protected land in the requesting user's own
+  `Documents\StepWind Restored` (an administrator/CLI restore uses `Public Documents`) — never
+  inside the ACL-locked store where a standard user couldn't open their own recovered file, and
+  never a world-readable public folder for a normal user's private data.
 - **Your data, your controls (Settings → Data management):** delete ALL history, clean up
   history belonging to no-longer-protected folders, run the retention cleanup on demand,
   and delete a single file's history from its version pane — every destructive action
@@ -212,10 +243,14 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
 - **Automated setup installer** (Inno Setup): registers the service (auto-start, LocalSystem),
   starts protecting immediately, adds the tray app to Windows startup for all users, and
   launches it. Clean uninstall stops + removes the service and keeps your version history.
-- **Fully automatic, silent updates:** the SYSTEM service checks GitHub for new releases,
-  verifies the setup's SHA-256, and installs them with zero UAC prompts. Opt-out available.
+- **Fail-closed, verified updates:** the SYSTEM service checks GitHub for new releases and
+  installs one only if it passes a SHA-256 checksum matched to its filename **and** a trusted
+  Authenticode signature — a release missing either is refused, never run. The installer backs
+  up the current install and rolls back automatically if the new build won't start, so an
+  update can't leave the machine unprotected. Silent auto-install stays disabled until releases
+  are code-signed (the safe default). Opt-out available.
 
-Verified: 70 unit tests; real-hardware elevated E2E through the production classes
+Verified: 217 unit tests; real-hardware elevated E2E through the production classes
 (reconstruct + reverse + version round-trip, including the marker-time delete path measured
 against the live NTFS journal); live service demo with encryption on (key sealed, zero
 plaintext leak, restore byte-exact); UI-automation pass driving every view of the redesigned

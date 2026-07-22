@@ -17,6 +17,17 @@ public sealed class StepWindSettings
     /// <summary>Absolute path prefixes to never version (games, huge data dirs…).</summary>
     public List<string> ExcludedPrefixes { get; set; } = [];
 
+    /// <summary>
+    /// Who owns each protected root, keyed by its store namespace segment (the folder leaf, e.g.
+    /// "Documents"), value = the user SIDs allowed to read/restore/purge that root's history
+    /// without elevation. The user who adds a folder becomes its owner; admins/SYSTEM bypass this.
+    /// This is how the elevated service keeps one local user from reading, restoring, or purging
+    /// ANOTHER user's file history over the shared pipe. Empty list = unscoped (grandfathered /
+    /// owner unknown): access then falls back to a live "can the caller actually read the folder"
+    /// check, so this never locks a user out of history for folders they can already open.
+    /// </summary>
+    public Dictionary<string, List<string>> RootOwners { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Where blobs + the version log live. Default: %ProgramData%\StepWind\store.</summary>
     public string StoreRoot { get; set; } = DefaultStoreRoot;
 
@@ -34,6 +45,16 @@ public sealed class StepWindSettings
 
     /// <summary>Largest single file to version, bytes (0 = unlimited).</summary>
     public long MaxFileBytes { get; set; } = 2L * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// Pause capturing when the store's drive has less than this many bytes free, so StepWind
+    /// never fills the disk (and never silently stops like File History did). 0 = use the safe
+    /// default (1 GiB). Capturing resumes automatically once space is available again.
+    /// </summary>
+    public long MinFreeDiskBytes { get; set; } = StepWind.Core.Storage.StorageGuard.DefaultMinFreeBytes;
+
+    /// <summary>Optional hard cap on the history store's own size in bytes (0 = unlimited).</summary>
+    public long MaxStoreBytes { get; set; }
 
     public RetentionPolicy Retention { get; set; } = new();
 

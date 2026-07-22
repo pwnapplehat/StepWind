@@ -69,6 +69,37 @@ public sealed class FlightRecorder : IDisposable
         }
     }
 
+    /// <summary>
+    /// A stable, opaque handle for an operation in the ring. The GUI receives this on the
+    /// timeline and passes it back to reverse the operation. Crucially it is NOT the operation's
+    /// data: the server re-derives the real paths from its OWN ring entry, so a client can never
+    /// forge a "move THIS to THERE" request — the worst a bogus handle does is match nothing.
+    /// Identity = file reference number + timestamp + kind (unique within the ring window).
+    /// </summary>
+    public static string OpToken(FileOperation op)
+        => $"{op.FileReferenceNumber}:{op.TimestampUtc.Ticks}:{(int)op.Kind}";
+
+    /// <summary>
+    /// Looks up the server-side operation for a handle from <see cref="OpToken"/>. Returns null
+    /// if no matching operation is currently in the ring (unknown/forged/expired handle), so the
+    /// caller rejects it rather than acting on attacker-chosen data.
+    /// </summary>
+    public FileOperation? Find(string token)
+    {
+        lock (_recentLock)
+        {
+            foreach (FileOperation op in _recent)
+            {
+                if (OpToken(op) == token)
+                {
+                    return op;
+                }
+            }
+        }
+
+        return null;
+    }
+
     private void TryPrime(string volume)
     {
         try

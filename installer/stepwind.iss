@@ -73,6 +73,82 @@ Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
   ValueName: "StepWind"; ValueData: """{app}\StepWind.exe"" --minimized"; Flags: uninsdeletevalue
 
 [Code]
+// ── Update rollback: THE INSTALLER IS THE ROLLBACK ACTOR ────────────────────────────────────
+// The SYSTEM service cannot roll back its own update: this installer STOPS that service before
+// swapping files, so the process that launched us is gone by the time a bad swap would need
+// undoing. Therefore the transactional safety lives here, in Inno [Code]:
+//   ssInstall     -> if this is an upgrade, stop the service and BACK UP the current install;
+//   (files copied by Inno; [Run] re-registers + starts the service)
+//   ssPostInstall -> HEALTH-GATE: confirm the service reaches RUNNING; if it doesn't, RESTORE
+//                    the backup and re-register it, so a broken release can never leave the
+//                    machine without protection. On success the backup is discarded.
+// Everything is logged to {commonappdata}\StepWind\logs\update-install.log for diagnostics.
+
+var
+  PrevInstallExisted: Boolean;
+
+function BackupDir: string;
+begin
+  Result := ExpandConstant('{commonappdata}\StepWind\update-backup');
+end;
+
+function InstallLogPath: string;
+begin
+  Result := ExpandConstant('{commonappdata}\StepWind\logs\update-install.log');
+end;
+
+procedure LogInstall(Msg: string);
+var
+  Existing: AnsiString;
+begin
+  ForceDirectories(ExpandConstant('{commonappdata}\StepWind\logs'));
+  if LoadStringFromFile(InstallLogPath, Existing) then
+    SaveStringToFile(InstallLogPath, Existing + Msg + #13#10, False)
+  else
+    SaveStringToFile(InstallLogPath, Msg + #13#10, False);
+end;
+
+// Mirror one directory tree onto another with robocopy (exit codes 0..7 are success).
+procedure MirrorTree(FromDir, ToDir: string);
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{cmd}'),
+    '/c robocopy "' + FromDir + '" "' + ToDir + '" /MIR /NFL /NDL /NJH /NJS /NP /R:1 /W:1',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+// Poll "sc query StepWind" until it reports the wanted state (RUNNING or STOPPED), or time out.
+function WaitForServiceState(Wanted: string; MaxTries: Integer): Boolean;
+var
+  ResultCode, I: Integer;
+  Output: AnsiString;
+  TmpFile: string;
+begin
+  Result := False;
+  TmpFile := ExpandConstant('{tmp}\sw_scq.txt');
+  for I := 0 to MaxTries do
+  begin
+    Exec(ExpandConstant('{cmd}'), '/c sc query StepWind > "' + TmpFile + '" 2>&1', '',
+      SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if LoadStringFromFile(TmpFile, Output) then
+    begin
+      if Pos(Wanted, Output) > 0 then
+      begin
+        Result := True;
+        Exit;
+      end;
+      // 1060 = service not installed; treat as "stopped" when that's what we're waiting for.
+      if (Wanted = 'STOPPED') and (Pos('1060', Output) > 0) then
+      begin
+        Result := True;
+        Exit;
+      end;
+    end;
+    Sleep(500);
+  end;
+end;
+
 // The service holds its binaries locked while running. Files are copied at ssInstall, so the
 // service MUST be fully STOPPED before that -- otherwise the copy races a live service, and
 // its crash-recovery restart can bring a NEW instance up on top of half-copied DLLs (observed
@@ -85,28 +161,13 @@ Root: HKLM; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 // "sc query" until it reports STOPPED (or is already gone). Only then does the copy proceed.
 procedure StopServiceAndWait;
 var
-  ResultCode, I: Integer;
-  Output: AnsiString;
-  TmpFile: string;
+  ResultCode: Integer;
 begin
   // Disarm failure actions for the duration of the copy (reset delay 0, no restart commands).
   Exec(ExpandConstant('{sys}\sc.exe'), 'failure StepWind reset= 0 actions= ///', '',
     SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\sc.exe'), 'stop StepWind', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-
-  TmpFile := ExpandConstant('{tmp}\sw_scq.txt');
-  for I := 0 to 40 do
-  begin
-    Exec(ExpandConstant('{cmd}'), '/c sc query StepWind > "' + TmpFile + '" 2>&1', '',
-      SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    if LoadStringFromFile(TmpFile, Output) then
-    begin
-      // 1060 = service not installed (fresh install / already removed); STOPPED = down.
-      if (Pos('1060', Output) > 0) or (Pos('STOPPED', Output) > 0) then
-        Break;
-    end;
-    Sleep(500);
-  end;
+  WaitForServiceState('STOPPED', 40);
 
   // The unelevated tray GUI has no failure action, so a forced kill is safe and frees StepWind.exe.
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM StepWind.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
@@ -114,9 +175,52 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
 begin
   if CurStep = ssInstall then
+  begin
+    // Is a previous install present? (Decides whether there's anything to back up / roll back to.)
+    PrevInstallExisted := FileExists(ExpandConstant('{app}\StepWind.Service.exe'));
     StopServiceAndWait;
+    if PrevInstallExisted then
+    begin
+      LogInstall('[' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '] upgrade: backing up current install before swap');
+      MirrorTree(ExpandConstant('{app}'), BackupDir);
+    end;
+  end;
+
+  if CurStep = ssPostInstall then
+  begin
+    // Health-gate the freshly installed service. [Run]'s install-service verb already tried to
+    // start it; give it a moment to reach RUNNING.
+    if WaitForServiceState('RUNNING', 30) then
+    begin
+      LogInstall('[' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '] post-install: service RUNNING; update healthy');
+      if DirExists(BackupDir) then
+        DelTree(BackupDir, True, True, True); // discard the backup — the new build is healthy
+    end
+    else if PrevInstallExisted and DirExists(BackupDir) then
+    begin
+      // The new build won't start. ROLL BACK to the backed-up install so protection survives.
+      LogInstall('[' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '] post-install: service did NOT reach RUNNING; ROLLING BACK to previous install');
+      Exec(ExpandConstant('{sys}\sc.exe'), 'stop StepWind', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      WaitForServiceState('STOPPED', 40);
+      Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM StepWind.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Sleep(400);
+      MirrorTree(BackupDir, ExpandConstant('{app}'));
+      // Re-register + start the restored service (its verb does stop/delete/create/start).
+      Exec(ExpandConstant('{app}\StepWind.Service.exe'), 'install-service', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      if WaitForServiceState('RUNNING', 30) then
+        LogInstall('[' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '] rollback complete: previous install RUNNING again')
+      else
+        LogInstall('[' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '] rollback attempted but service still not RUNNING -- manual repair may be needed');
+    end
+    else
+    begin
+      LogInstall('[' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '] post-install: service not RUNNING and no backup to roll back to (fresh install) -- service verb will keep retrying');
+    end;
+  end;
 end;
 
 // The GUI renders in WebView2. Win11 + current Win10 already have the Evergreen runtime;

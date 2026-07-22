@@ -222,6 +222,33 @@ public class HostIpcTests : IDisposable
         Assert.Fail("newly added folder did not start capturing");
     }
 
+    [Fact]
+    public async Task A_deleted_protected_file_exposes_a_restorable_version_for_timeline_undo()
+    {
+        // P0-C: the timeline offers "Restore" on a deleted file that has saved history. This
+        // pins the host mapping the flight recorder uses (RecoverableVersionFor) without needing
+        // ETW/admin: a protected file with history yields a VersionId; restoring it recovers the
+        // bytes to the original path once the file is gone.
+        string file = Path.Combine(_watch, "deleteme.txt");
+        File.WriteAllText(file, "recover me after delete");
+        await WaitForCapture("Docs/deleteme.txt");
+
+        string? versionId = _host.RecoverableVersionIdFor(file);
+        Assert.NotNull(versionId);
+
+        // A path that was never protected has nothing to recover — honest null, not a guess.
+        Assert.Null(_host.RecoverableVersionIdFor(Path.Combine(_root, "Unprotected", "ghost.txt")));
+
+        // The delete happens; the timeline's Restore action sends this VersionId to RestoreVersion.
+        File.Delete(file);
+        IpcResponse restore = _host.Handle(new IpcRequest { Command = IpcCommand.RestoreVersion, Arg1 = versionId });
+        Assert.True(restore.Ok, restore.Error);
+
+        string restoredPath = JsonDocument.Parse(restore.Json!).RootElement.GetProperty("RestoredPath").GetString()!;
+        Assert.True(File.Exists(restoredPath));
+        Assert.Equal("recover me after delete", File.ReadAllText(restoredPath));
+    }
+
     private async Task WaitForCapture(string rel)
     {
         for (int i = 0; i < 40; i++)

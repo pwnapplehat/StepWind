@@ -3,19 +3,28 @@ using System.Net.Http;
 using System.Reflection;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
-using System.Text.Json;
+using StepWind.Core.Updates;
 
 namespace StepWind.Service;
 
 /// <summary>
-/// Fully automatic, silent updater — driven by the SYSTEM service, which is the neat part:
-/// because the service is already elevated, it applies updates with ZERO UAC prompts. Unlike
-/// BitBroom (a lone GUI exe that hot-swaps itself), StepWind is a service + GUI + shared DLLs,
-/// so the safe way to update is to download the new signed setup .exe, verify its SHA-256
-/// against the release's SHA256SUMS.txt, and run it silently — the installer already knows how
-/// to stop the service, replace every file, and restart cleanly.
+/// Automatic updater driven by the SYSTEM service. Because the service is already elevated it
+/// can apply updates with no UAC prompt — which is exactly why every step here is FAIL-CLOSED:
+/// running an unverified installer as SYSTEM would be a remote-code-execution channel, so an
+/// update is launched ONLY when all of the following hold:
 ///
-/// One opt-out check at startup, then daily. Network is the only outbound traffic in StepWind.
+///   1. the release advertises a newer version and a setup asset;
+///   2. the release publishes SHA256SUMS.txt (absent ⇒ refuse — never "assume good");
+///   3. the downloaded setup's SHA-256 matches the published checksum FOR ITS FILENAME;
+///   4. the downloaded setup carries a valid Authenticode signature that chains to a trusted
+///      root (and, once <see cref="ExpectedSignerThumbprint"/> is pinned, is OUR certificate).
+///
+/// A GitHub-published checksum is not an independent root of trust (an attacker who can replace
+/// the setup asset can replace the sums too), so the code signature in (4) is the real gate.
+/// Until releases are code-signed, (4) fails and silent auto-update simply does not run — the
+/// safe default. Rollback of a failed install is owned by the INSTALLER (Inno Setup [Code]),
+/// not by this service: the installer stops this very process before swapping files, so the
+/// service cannot roll itself back.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class UpdateService
@@ -23,6 +32,13 @@ public sealed class UpdateService
     private const string Owner = "pwnapplehat";
     private const string Repo = "StepWind";
     private const string LatestApi = $"https://api.github.com/repos/{Owner}/{Repo}/releases/latest";
+
+    /// <summary>
+    /// StepWind's release-signing certificate thumbprint (uppercase hex, no spaces). While empty,
+    /// any signature that chains to a trusted root is accepted; set this once releases are signed
+    /// to PIN updates to our own certificate and reject every other publisher.
+    /// </summary>
+    private const string ExpectedSignerThumbprint = "";
 
     private readonly Action<string> _log;
     private readonly HttpClient _http;
@@ -41,92 +57,96 @@ public sealed class UpdateService
         {
             string raw = typeof(UpdateService).Assembly
                 .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "1.0.0";
-            return TryNormalize(raw, out Version? v) ? v! : new Version(1, 0, 0);
+            return UpdatePlanner.TryParseVersion(raw, out Version v) ? v : new Version(1, 0, 0);
         }
     }
 
-    /// <summary>Checks for a newer release and, if found, downloads + verifies + installs it silently.</summary>
-    public async Task CheckAndApplyAsync(CancellationToken ct = default)
+    /// <summary>Checks for a newer release and, if found and fully verified, installs it silently.</summary>
+    public async Task<UpdateOutcome> CheckAndApplyAsync(CancellationToken ct = default)
     {
         try
         {
             using HttpResponseMessage resp = await _http.GetAsync(LatestApi, ct);
             if (!resp.IsSuccessStatusCode)
             {
-                return;
+                return UpdateOutcome.Error;
             }
 
-            using JsonDocument doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
-            JsonElement root = doc.RootElement;
+            ReleaseInfo release = UpdatePlanner.ParseRelease(await resp.Content.ReadAsStringAsync(ct));
 
-            string? tag = root.TryGetProperty("tag_name", out JsonElement t) ? t.GetString() : null;
-            if (tag is null || !TryNormalize(tag, out Version? latest) || latest is null || latest <= CurrentVersion)
+            if (!UpdatePlanner.TryParseVersion(release.Tag, out Version latest) || latest <= CurrentVersion)
             {
-                return; // up to date
+                return UpdateOutcome.UpToDate;
             }
 
             _log($"update available: {latest.ToString(3)} (running {CurrentVersion.ToString(3)})");
 
-            (string? setupUrl, string? sumsUrl) = FindAssets(root);
-            if (setupUrl is null)
+            if (release.SetupUrl is null)
             {
                 _log("update skipped: no setup asset on the release");
-                return;
+                return UpdateOutcome.NoSetupAsset;
+            }
+
+            // (2) Fail closed on a missing checksum list. An installer with no published SHA256SUMS
+            // is refused outright — we never run an unverified binary as SYSTEM.
+            if (release.SumsUrl is null)
+            {
+                _log("update ABORTED: release has no SHA256SUMS.txt to verify the setup against");
+                return UpdateOutcome.NoChecksums;
             }
 
             string dir = Path.Combine(Path.GetTempPath(), "StepWindUpdate");
             Directory.CreateDirectory(dir);
             string setupPath = Path.Combine(dir, $"StepWind-{latest.ToString(3)}-setup.exe");
 
-            await Download(setupUrl, setupPath, ct);
+            await Download(release.SetupUrl, setupPath, ct);
 
-            if (sumsUrl is not null && !await VerifyHash(setupPath, sumsUrl, ct))
+            // (3) Checksum must match for THIS filename.
+            string sumsText = await _http.GetStringAsync(release.SumsUrl, ct);
+            string actual = await Sha256HexAsync(setupPath, ct);
+            if (!UpdatePlanner.ChecksumMatches(sumsText, Path.GetFileName(setupPath), actual))
             {
                 _log("update ABORTED: SHA-256 of the downloaded setup did not match the published checksum");
                 TryDelete(setupPath);
-                return;
+                return UpdateOutcome.ChecksumMismatch;
             }
 
-            _log("checksum verified; launching silent update");
-            // The SYSTEM service runs the installer silently — no UAC. The installer stops
-            // this service, swaps files, and restarts it; VERYSILENT + NORESTART keep it quiet.
+            // (4) Authenticode is the real root of trust. A checksum from the same release an
+            // attacker would tamper with proves only integrity, not authenticity.
+            SignatureTrust trust = Authenticode.VerifyFile(setupPath);
+            if (trust != SignatureTrust.Trusted)
+            {
+                _log($"update ABORTED: setup is not signed by a trusted publisher ({trust}); silent update stays disabled until releases are code-signed");
+                TryDelete(setupPath);
+                return UpdateOutcome.Unsigned;
+            }
+
+            if (ExpectedSignerThumbprint.Length > 0)
+            {
+                string? thumb = Authenticode.SignerThumbprint(setupPath);
+                if (!string.Equals(thumb, ExpectedSignerThumbprint, StringComparison.OrdinalIgnoreCase))
+                {
+                    _log($"update ABORTED: setup signer thumbprint '{thumb}' is not StepWind's pinned certificate");
+                    TryDelete(setupPath);
+                    return UpdateOutcome.Unsigned;
+                }
+            }
+
+            _log("setup verified (checksum + trusted Authenticode signature); launching silent update");
+            // The installer stops this service, backs up the current install, swaps files, and —
+            // if the new service won't start — restores the backup (see installer/stepwind.iss
+            // [Code]). We only ever hand it a verified, signed binary.
             Process.Start(new ProcessStartInfo(setupPath, "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES")
             {
                 UseShellExecute = false,
             });
+            return UpdateOutcome.Launched;
         }
         catch (Exception ex)
         {
             _log("update check failed: " + ex.Message); // never fatal — protection keeps running
+            return UpdateOutcome.Error;
         }
-    }
-
-    private static (string? Setup, string? Sums) FindAssets(JsonElement release)
-    {
-        string? setup = null, sums = null;
-        if (release.TryGetProperty("assets", out JsonElement assets) && assets.ValueKind == JsonValueKind.Array)
-        {
-            foreach (JsonElement a in assets.EnumerateArray())
-            {
-                string? name = a.TryGetProperty("name", out JsonElement n) ? n.GetString() : null;
-                string? url = a.TryGetProperty("browser_download_url", out JsonElement u) ? u.GetString() : null;
-                if (name is null || url is null)
-                {
-                    continue;
-                }
-
-                if (name.EndsWith("-setup.exe", StringComparison.OrdinalIgnoreCase))
-                {
-                    setup = url;
-                }
-                else if (name.Equals("SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase))
-                {
-                    sums = url;
-                }
-            }
-        }
-
-        return (setup, sums);
     }
 
     private async Task Download(string url, string dest, CancellationToken ct)
@@ -137,42 +157,10 @@ public sealed class UpdateService
         await resp.Content.CopyToAsync(fs, ct);
     }
 
-    private async Task<bool> VerifyHash(string filePath, string sumsUrl, CancellationToken ct)
+    private static async Task<string> Sha256HexAsync(string filePath, CancellationToken ct)
     {
-        string sums = await _http.GetStringAsync(sumsUrl, ct);
-        string actual;
-        await using (FileStream fs = File.OpenRead(filePath))
-        {
-            actual = Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
-        }
-
-        string wantedName = Path.GetFileName(filePath);
-        foreach (string raw in sums.Split('\n'))
-        {
-            string line = raw.Trim();
-            // "<hex>  <name>" — accept if the hash matches our file's, regardless of exact name spacing.
-            string[] parts = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length >= 2 && parts[0].Equals(actual, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        _log($"no matching checksum for {wantedName}");
-        return false;
-    }
-
-    private static bool TryNormalize(string s, out Version? v)
-    {
-        v = null;
-        string core = s.Trim().TrimStart('v', 'V').Split('+', '-')[0];
-        if (!Version.TryParse(core, out Version? parsed))
-        {
-            return false;
-        }
-
-        v = new Version(Math.Max(0, parsed.Major), Math.Max(0, parsed.Minor), Math.Max(0, parsed.Build));
-        return true;
+        await using FileStream fs = File.OpenRead(filePath);
+        return Convert.ToHexString(await SHA256.HashDataAsync(fs, ct)).ToLowerInvariant();
     }
 
     private static void TryDelete(string path)

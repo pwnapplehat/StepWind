@@ -62,7 +62,7 @@ public sealed class StepWindWorker : BackgroundService
 
         IBlobCodec codec = SelectCodec(settings);
         _host = new StepWindHost(settings, codec, msg => _logger.LogInformation("{Message}", msg));
-        _pipe = new PipeServer(req => _host.Handle(req), msg => _logger.LogWarning("{Message}", msg));
+        _pipe = new PipeServer((req, caller) => _host.Handle(req, caller), msg => _logger.LogWarning("{Message}", msg));
         _pipe.Start();
 
         _logger.LogInformation("StepWind service started; watching {Count} folder(s).", settings.WatchedFolders.Count);

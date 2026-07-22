@@ -32,27 +32,15 @@ public sealed class VersionStore
 
     /// <summary>
     /// Captures the current content of <paramref name="sourcePath"/> as a new version under
-    /// <paramref name="relativePath"/>. Streams the file through the chunker, so a multi-GB
-    /// file is never buffered whole. Deduplicates: unchanged chunks are already present and
-    /// aren't rewritten. Returns the recorded version.
+    /// <paramref name="relativePath"/>. Streams the file through the chunker ONE chunk at a time,
+    /// storing each immediately, so peak memory is a single chunk (~tens of KB) no matter how
+    /// large the file — a multi-GB file never sits in RAM inside the SYSTEM service. Deduplicates
+    /// at two levels: an already-present chunk is a no-op write (content-addressed), and if the
+    /// resulting chunk list matches the file's most recent version, no new version is recorded.
+    /// Returns the recorded (or unchanged existing) version.
     /// </summary>
     public FileVersion Capture(string sourcePath, string relativePath, string reason = "change")
     {
-        // Read/chunk/hash the whole file OUTSIDE the gate (this is the slow part), then take
-        // the gate only for the atomic Put-blobs + Append-version publish, so a large capture
-        // doesn't stall other captures and can't interleave with GC.
-        var chunks = new List<(BlobId Id, byte[] Data)>();
-        long size = 0;
-        using (FileStream input = OpenShared(sourcePath))
-        {
-            foreach (ReadOnlyMemory<byte> chunk in _chunker.SplitStream(input))
-            {
-                byte[] data = chunk.ToArray();
-                chunks.Add((BlobId.OfContent(data), data));
-                size += data.Length;
-            }
-        }
-
         DateTime modified;
         try
         {
@@ -64,23 +52,33 @@ public sealed class VersionStore
         }
 
         string normalized = NormalizePath(relativePath);
-        var chunkIds = chunks.Select(c => c.Id.Hex).ToList();
 
+        // The whole read→store→publish runs under the gate so retention's mark-and-sweep can't
+        // sweep a chunk we've stored but not yet referenced in the log (use-after-free). We keep
+        // only chunk IDs in memory, never the chunk bytes — so memory stays flat for any size.
         lock (_maintenanceGate)
         {
+            var chunkIds = new List<string>();
+            long size = 0;
+            using (FileStream input = OpenShared(sourcePath))
+            {
+                foreach (ReadOnlyMemory<byte> chunk in _chunker.SplitStream(input))
+                {
+                    ReadOnlySpan<byte> data = chunk.Span;
+                    (BlobId id, _) = _blobs.Put(data); // idempotent: an existing chunk isn't rewritten
+                    chunkIds.Add(id.Hex);
+                    size += data.Length;
+                }
+            }
+
             // Version-level dedup: FileSystemWatcher fires on touches that don't change bytes
             // (attribute writes, re-saves of identical content). If the chunk list matches the
-            // most recent version of this file, there's nothing new to keep — return it instead
-            // of bloating history with an identical entry.
+            // most recent version, nothing new was stored above (every Put was a dedup hit) and
+            // there's nothing to record — return the existing version instead of bloating history.
             FileVersion? latest = _log.LatestFor(normalized);
             if (latest is not null && latest.Chunks.SequenceEqual(chunkIds, StringComparer.Ordinal))
             {
                 return latest;
-            }
-
-            foreach ((BlobId id, byte[] data) in chunks)
-            {
-                _blobs.Put(data);
             }
 
             return _log.Append(new FileVersion

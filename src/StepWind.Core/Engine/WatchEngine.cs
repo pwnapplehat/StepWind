@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO;
 using StepWind.Core.Storage;
 
@@ -14,9 +15,16 @@ public sealed record EngineStatus(int WatchedRoots, int PendingChanges, long Ver
 ///
 /// Two day-one reliability choices live here:
 ///   • capture is best-effort per file — one unreadable/locked file never stops the others,
-///     and locked files are retried (and, in the service, read via VSS);
+///     and locked files are retried on the next quiet cycle (and on the startup reconcile);
+///     an exclusively-locked file is not force-snapshotted, so its version lands when the app
+///     releases it (a per-file "locked" status is surfaced in the UI rather than pretended);
 ///   • the engine records the last change time so the service can persist a cursor and,
 ///     combined with the USN catch-up, never miss changes that happened while it was down.
+///
+/// A newly CREATED file is captured on a fast path (a short, dedicated drain) rather than only
+/// after the full debounce quiet period — otherwise a file created and deleted within the quiet
+/// window would leave NO stored version at all, so a delete could not be undone. Content is only
+/// ever read while the file exists; a delete never triggers a (futile, already-gone) read.
 /// </summary>
 public sealed class WatchEngine : IDisposable
 {
@@ -26,18 +34,45 @@ public sealed class WatchEngine : IDisposable
     private readonly List<FileSystemWatcher> _watchers = [];
     private readonly List<string> _roots;
     private readonly System.Threading.Timer _drainTimer;
+    private readonly System.Threading.Timer _createTimer;
+    // path → when it was first seen created. Bounds retry and de-dupes repeat Created events.
+    private readonly ConcurrentDictionary<string, DateTime> _pendingCreates = new(StringComparer.OrdinalIgnoreCase);
     private readonly Action<string>? _log;
 
     private long _versionsCaptured; // Interlocked — touched by the drain timer, reconcile, and error-recovery threads
     private DateTime? _lastCaptureUtc;
     private volatile bool _disposed;
 
+    /// <summary>How often the create fast-path checks whether a new file has settled.</summary>
+    private static readonly TimeSpan CreateBaselineInterval = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// A new file must have been quiet for at least this long (and be non-empty) before the fast
+    /// path baselines it — so we never capture a half-written or zero-byte file as a "version".
+    /// </summary>
+    private static readonly TimeSpan CreateStability = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>
+    /// Stop the create fast-path from chasing a file forever: after this long the normal debounce
+    /// owns it. Bounds the window we close to roughly [CreateStability, this] before a delete.
+    /// </summary>
+    private static readonly TimeSpan CreateGiveUp = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Optional gate consulted before every capture. When it returns false (e.g. the disk is
+    /// nearly full — see <see cref="Storage.StorageGuard"/>) captures are skipped, not stored,
+    /// so StepWind never fills the drive. Skipped changes are re-captured by the reconcile pass
+    /// once the gate reopens, so nothing is lost — only deferred.
+    /// </summary>
+    private readonly Func<bool>? _canCapture;
+
     public WatchEngine(VersionStore store, PathExclusions exclusions, IEnumerable<string> roots,
-        Action<string>? log = null, TimeSpan? quietPeriod = null)
+        Action<string>? log = null, TimeSpan? quietPeriod = null, Func<bool>? canCapture = null)
     {
         _store = store;
         _exclusions = exclusions;
         _log = log;
+        _canCapture = canCapture;
         _roots = [.. roots.Where(Directory.Exists)];
         _debouncer = new ChangeDebouncer { QuietPeriod = quietPeriod ?? TimeSpan.FromSeconds(2) };
 
@@ -50,6 +85,7 @@ public sealed class WatchEngine : IDisposable
         }
 
         _drainTimer = new System.Threading.Timer(_ => Drain(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        _createTimer = new System.Threading.Timer(_ => DrainCreates(), null, CreateBaselineInterval, CreateBaselineInterval);
     }
 
     public EngineStatus Status => new(_roots.Count, _debouncer.PendingCount, _versionsCaptured, _lastCaptureUtc);
@@ -65,8 +101,9 @@ public sealed class WatchEngine : IDisposable
             InternalBufferSize = 256 * 1024,
         };
         w.Changed += OnChanged;
-        w.Created += OnChanged;
+        w.Created += OnCreated;
         w.Renamed += (_, e) => OnPath(e.FullPath);
+        w.Deleted += OnDeleted;
         w.Error += (_, e) => OnWatcherError(root, w, e.GetException());
         w.EnableRaisingEvents = true;
         _watchers.Add(w);
@@ -116,6 +153,37 @@ public sealed class WatchEngine : IDisposable
 
     private void OnChanged(object sender, FileSystemEventArgs e) => OnPath(e.FullPath);
 
+    /// <summary>
+    /// A brand-new file. Queue it for a PROMPT baseline capture (see <see cref="DrainCreates"/>)
+    /// AND debounce it like a change — the debounced pass captures the final content once the
+    /// file settles (a create is often followed immediately by writes), while the prompt baseline
+    /// guarantees at least one restorable version exists before a fast create→delete can erase it.
+    /// </summary>
+    private void OnCreated(object sender, FileSystemEventArgs e)
+    {
+        string fullPath = e.FullPath;
+        if (_exclusions.IsExcludedByDirectory(fullPath) || _exclusions.IsExcludedByExtension(fullPath)
+            || _exclusions.IsUnderExcludedPrefix(fullPath))
+        {
+            return;
+        }
+
+        _pendingCreates.TryAdd(fullPath, DateTime.UtcNow);
+        _debouncer.Touch(fullPath, DateTime.UtcNow);
+    }
+
+    /// <summary>
+    /// A delete. There is nothing to capture — the bytes are already gone — so we never attempt
+    /// a (futile) read here; the file's previously stored versions remain fully restorable, which
+    /// is what powers timeline delete-undo. The whole-machine flight recorder is what surfaces
+    /// the delete itself on the timeline. We simply stop tracking the path as a pending change.
+    /// </summary>
+    private void OnDeleted(object sender, FileSystemEventArgs e)
+    {
+        _debouncer.Forget(e.FullPath);
+        _pendingCreates.TryRemove(e.FullPath, out _);
+    }
+
     private void OnPath(string fullPath)
     {
         // Cheap pre-filter here; the full attribute/size check happens at capture time.
@@ -141,14 +209,63 @@ public sealed class WatchEngine : IDisposable
         }
     }
 
+    /// <summary>
+    /// Fast path for newly created files: once a new file has been briefly quiet (so we don't
+    /// grab a half-written file), baseline it — best-effort — so a create→delete inside the
+    /// normal debounce window can't leave a file with zero stored versions. A file is only
+    /// baselined here ONCE (then removed); the normal debounce still captures the settled result.
+    /// Deduplication collapses the two when content is unchanged, so it costs nothing normally.
+    /// </summary>
+    private void DrainCreates()
+    {
+        if (_disposed || _pendingCreates.IsEmpty)
+        {
+            return;
+        }
+
+        DateTime now = DateTime.UtcNow;
+        foreach (KeyValuePair<string, DateTime> kv in _pendingCreates)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            TimeSpan age = now - kv.Value;
+            if (age < CreateStability)
+            {
+                continue; // let it settle a moment first — avoid capturing a partial write
+            }
+
+            if (!_pendingCreates.TryRemove(kv.Key, out _))
+            {
+                continue; // another tick took it
+            }
+
+            // Past the give-up horizon the normal debounce owns it; don't double-capture.
+            if (age <= CreateGiveUp)
+            {
+                TryCapture(kv.Key, reason: "create");
+            }
+        }
+    }
+
     /// <summary>Captures one path if it still exists and passes exclusions. Never throws.</summary>
-    public bool TryCapture(string fullPath)
+    public bool TryCapture(string fullPath) => TryCapture(fullPath, reason: "change");
+
+    /// <summary>Captures one path with an explicit reason label. Never throws.</summary>
+    public bool TryCapture(string fullPath, string reason)
     {
         try
         {
             if (_disposed || !File.Exists(fullPath))
             {
                 return false; // engine torn down, or deleted before it settled
+            }
+
+            if (_canCapture is not null && !_canCapture())
+            {
+                return false; // storage paused (e.g. disk nearly full) — reconcile re-captures later
             }
 
             var info = new FileInfo(fullPath);
@@ -163,7 +280,7 @@ public sealed class WatchEngine : IDisposable
                 return false;
             }
 
-            _store.Capture(fullPath, rel);
+            _store.Capture(fullPath, rel, reason);
             Interlocked.Increment(ref _versionsCaptured);
             _lastCaptureUtc = DateTime.UtcNow;
             return true;
@@ -175,7 +292,8 @@ public sealed class WatchEngine : IDisposable
             // (Office, most editors) — already succeeds; this path is the minority that holds
             // an exclusive lock (e.g. an open Outlook PST). Requeue: it captures on the next
             // quiet cycle, and at the latest when the app releases the file (and on the startup
-            // reconcile pass). Snapshot-based reads of exclusively-locked files are not done.
+            // reconcile pass). Exclusively-locked files are NOT force-snapshotted (no VSS here) —
+            // the version lands when the lock clears; the UI shows the file's protection status.
             _debouncer.Touch(fullPath, DateTime.UtcNow);
             return false;
         }
@@ -229,6 +347,12 @@ public sealed class WatchEngine : IDisposable
                 if (_disposed || ct.IsCancellationRequested)
                 {
                     _log?.Invoke($"catch-up aborted (folders changed) after {captured} file(s)");
+                    return captured;
+                }
+
+                if (_canCapture is not null && !_canCapture())
+                {
+                    _log?.Invoke($"catch-up paused (storage) after {captured} file(s)");
                     return captured;
                 }
 
@@ -301,6 +425,7 @@ public sealed class WatchEngine : IDisposable
     {
         _disposed = true;
         _drainTimer.Dispose();
+        _createTimer.Dispose();
         foreach (FileSystemWatcher w in _watchers.ToArray())
         {
             try

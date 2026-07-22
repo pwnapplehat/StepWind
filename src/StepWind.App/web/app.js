@@ -215,12 +215,20 @@ async function pollStatus() {
   try {
     const s = await call("status");
     lastStatus = s;
-    $("#status-dot").className = "dot ok";
-    $("#status-title").textContent = "Protection active";
-    $("#status-sub").textContent = s.WatchedRoots === 0
-      ? "No folders protected yet"
-      : `${s.WatchedRoots} folder${s.WatchedRoots === 1 ? "" : "s"} · ` +
-        `${(s.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(s.StoreBytes)}`;
+    if (s.CapturePaused) {
+      // Loud, honest state: protection is on but NOT capturing (disk full / quota) — the exact
+      // File-History failure StepWind exists to avoid, surfaced instead of hidden.
+      $("#status-dot").className = "dot warn";
+      $("#status-title").textContent = "Capturing paused";
+      $("#status-sub").textContent = s.PauseReason || "Low disk space — free up space to resume.";
+    } else {
+      $("#status-dot").className = "dot ok";
+      $("#status-title").textContent = "Protection active";
+      $("#status-sub").textContent = s.WatchedRoots === 0
+        ? "No folders protected yet"
+        : `${s.WatchedRoots} folder${s.WatchedRoots === 1 ? "" : "s"} · ` +
+          `${(s.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(s.StoreBytes)}`;
+    }
   } catch {
     lastStatus = null;
     $("#status-dot").className = "dot bad";
@@ -269,6 +277,23 @@ function opInProtectedFolder(op) {
         (op.NewPath || "").toLowerCase().startsWith(prefix.toLowerCase())) return true;
   }
   return false;
+}
+
+// The action shown on the right of a timeline row:
+//  • move/rename  → Undo (move it back, no stored content needed);
+//  • delete with a saved version → Restore (recover from the version store);
+//  • delete with no saved version → an honest "not saved" hint, never a dead button.
+function timelineAction(op) {
+  if (op.Reversible) {
+    return `<button class="btn primary tl-undo" data-op="${esc(op.OperationId)}">Undo</button>`;
+  }
+  if (op.Kind === "Delete" && op.RecoverableVersionId) {
+    return `<button class="btn primary tl-restore" data-v="${esc(op.RecoverableVersionId)}">Restore</button>`;
+  }
+  if (op.Kind === "Delete") {
+    return `<span class="tl-norecover" title="This file wasn't in a protected folder, so no version was saved to restore.">Not saved</span>`;
+  }
+  return "<span></span>";
 }
 
 function renderTimeline(animate = false) {
@@ -331,7 +356,7 @@ function renderTimeline(animate = false) {
             <div class="tl-desc"><span class="tl-badge">${op.Kind}</span> ${describeOp(op)}</div>
             <div class="tl-meta"><span class="path" title="${esc(path)}">${esc(path)}</span>${proc ? `<span class="proc">${proc}</span>` : ""}</div>
           </div>
-          ${op.Reversible ? `<button class="btn primary tl-undo" data-op="${esc(op.OperationId)}">Undo</button>` : "<span></span>"}
+          ${timelineAction(op)}
         </div>`;
       i++;
     }
@@ -360,6 +385,18 @@ function renderTimeline(animate = false) {
       await loadTimeline(false);
     } catch (err) {
       toast("err", "Couldn't undo", err.message);
+      b.disabled = false;
+    }
+  }));
+  $$(".tl-restore", host).forEach((b) => (b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const res = await call("restore", { versionId: b.dataset.v });
+      const where = res && res.RestoredPath ? res.RestoredPath : "its folder";
+      toast("ok", "Restored", "Recovered to " + where + ".");
+      await loadTimeline(false);
+    } catch (err) {
+      toast("err", "Couldn't restore", err.message);
       b.disabled = false;
     }
   }));
@@ -987,8 +1024,8 @@ async function loadSettings() {
       <div class="set-section">
         <div class="set-label">Updates</div>
         <div class="card set-card"><div class="set-row">
-          <div><div class="set-title">Automatic silent updates</div>
-          <div class="set-sub">The background service checks GitHub daily, verifies each update's SHA-256, and installs it with zero prompts.</div></div>
+          <div><div class="set-title">Automatic updates</div>
+          <div class="set-sub">The service checks GitHub daily and installs an update only if it passes a SHA-256 checksum and a trusted code-signature check, rolling back if a new build won't start. (Until releases are code-signed, updates won't install on their own.)</div></div>
           ${sw("sw-update", s?.AutoUpdateEnabled)}
         </div></div>
       </div>

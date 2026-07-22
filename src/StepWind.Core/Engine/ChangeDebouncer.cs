@@ -18,6 +18,9 @@ public sealed class ChangeDebouncer
     /// <summary>Records that a path changed "now" (resets its quiet timer).</summary>
     public void Touch(string path, DateTime nowUtc) => _pending[path] = nowUtc;
 
+    /// <summary>Drops a pending path (e.g. it was deleted, so there's nothing left to capture).</summary>
+    public void Forget(string path) => _pending.TryRemove(path, out _);
+
     public int PendingCount => _pending.Count;
 
     /// <summary>Removes and returns the paths that have been quiet long enough to capture.</summary>
