@@ -164,7 +164,7 @@ tests/                 deterministic Core tests
 
 ## Verified
 
-- **241 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+- **265 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
   integrity, encryption round-trip & tamper rejection, DPAPI key stability, live encryption
   toggling (mixed-store reads, background re-encode convergence in both directions,
   interrupted-migration recovery, storage byte tracking, the IPC toggle end-to-end), USN
@@ -188,7 +188,11 @@ tests/                 deterministic Core tests
   (a wrapped/truncated journal resyncs loudly instead of dropping operations), **store
   verify/repair** + index backup (damaged versions are found and quarantined, the good ones kept),
   **encryption recovery-key** export/import (survives an OS reinstall), **batch undo** (per-item
-  results, never stops halfway), **long-path** capture, and the **resync policy**.
+  results, never stops halfway), **long-path** capture, the **resync policy**, **concurrent-IPC**
+  thread-safety, the **MCP gateway allow-list**, **git branch/commit annotation** + the opt-in
+  **.gitignore matcher**, **guided store relocation** (copy→verify→switch, never deleting the old
+  store), and **index (metadata) encryption** (read-always/write-conditional so toggling never
+  orphans history).
 - **Real-hardware E2E** (elevated): a scripted create/rename/move/delete is reconstructed
   from the live journal, the move is reversed (folder back in one click), and a version is
   restored byte-exact after overwrite+delete — all through the production classes. The

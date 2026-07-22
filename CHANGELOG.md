@@ -26,9 +26,19 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   report (nothing is ever overwritten, and a partial failure never silently stops the rest).
 - **Diagnostics export.** Settings → About → **Export diagnostics** saves a support bundle
   (configuration + health only — no file names or contents).
-- **[Documented, not yet implemented]** Encrypting the version index (file names/dates) itself is
-  a planned follow-up; today encryption protects file *contents*, and the threat model says so
-  plainly (see SECURITY.md).
+- **Developer & scale hardening.** A real scriptable CLI (status/timeline/history/read/diff/
+  checkpoint/undo/restore/protect/verify/repair/relocate — JSON output); the WebView2 host
+  recovers from a failed runtime load (Retry + install-runtime) instead of a blank window; the
+  service pipe now handles clients concurrently so one slow request can't stall the GUI and every
+  MCP client; the MCP surface gained a gateway allow-list (read+additive only), recent-files and
+  batch-undo tools, and a CI stdio smoke test; versions captured in a git repo are annotated with
+  the branch/commit, and an opt-in setting honors the repo's `.gitignore`.
+- **Move your history to another drive.** Settings → Data management → Move relocates the store the
+  safe way — copy, verify every version restores, switch over, and leave the old copy untouched.
+- **Optional index (metadata) encryption.** Beyond encrypting file *contents*, you can now also
+  encrypt the index of names/paths/dates, so an offline drive reveals no metadata. Turning it on or
+  off never orphans history (the key always reads existing lines; a retention pass converges the
+  file).
 
 - **Delete-undo is real, end to end.** A newly created file is now baselined within a moment of
   creation (a fast create-capture path), so a file created and deleted inside the debounce quiet
@@ -274,7 +284,7 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   update can't leave the machine unprotected. Silent auto-install stays disabled until releases
   are code-signed (the safe default). Opt-out available.
 
-Verified: 217 unit tests; real-hardware elevated E2E through the production classes
+Verified: 265 unit tests; real-hardware elevated E2E through the production classes
 (reconstruct + reverse + version round-trip, including the marker-time delete path measured
 against the live NTFS journal); live service demo with encryption on (key sealed, zero
 plaintext leak, restore byte-exact); UI-automation pass driving every view of the redesigned
