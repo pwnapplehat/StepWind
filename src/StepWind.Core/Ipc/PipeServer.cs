@@ -16,9 +16,15 @@ namespace StepWind.Core.Ipc;
 [SupportedOSPlatform("windows")]
 public sealed class PipeServer : IDisposable
 {
+    // Cap on connections handled at once. Enough that the GUI and several MCP/CLI clients never
+    // block each other (the old serial loop meant one slow diff stalled everyone), but bounded so
+    // a flood of connections can't spawn unlimited handler tasks.
+    private const int MaxConcurrent = 8;
+
     private readonly Func<IpcRequest, CallerContext, IpcResponse> _handler;
     private readonly Action<string>? _log;
     private readonly CancellationTokenSource _cts = new();
+    private readonly SemaphoreSlim _slots = new(MaxConcurrent, MaxConcurrent);
     private Task? _loop;
 
     public PipeServer(Func<IpcRequest, CallerContext, IpcResponse> handler, Action<string>? log = null)
@@ -33,21 +39,49 @@ public sealed class PipeServer : IDisposable
     {
         while (!ct.IsCancellationRequested)
         {
+            NamedPipeServerStream? server = null;
             try
             {
-                using NamedPipeServerStream server = CreatePipe();
+                // Wait for a free handler slot BEFORE creating the next pipe instance, so at most
+                // MaxConcurrent instances exist at once.
+                await _slots.WaitAsync(ct);
+                server = CreatePipe();
                 await server.WaitForConnectionAsync(ct);
-                await HandleConnection(server, ct);
             }
             catch (OperationCanceledException)
             {
+                server?.Dispose();
+                _slots.Release();
                 return;
             }
             catch (Exception ex)
             {
                 _log?.Invoke("pipe accept error: " + ex.Message);
-                await Task.Delay(500, ct).ContinueWith(_ => { }, CancellationToken.None);
+                server?.Dispose();
+                _slots.Release();
+                try { await Task.Delay(500, ct); } catch { return; }
+                continue;
             }
+
+            // Handle this connection concurrently so a slow request (e.g. a big diff) never blocks
+            // the next client. The handler owns disposing the stream and releasing its slot.
+            NamedPipeServerStream accepted = server;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await HandleConnection(accepted, ct);
+                }
+                catch (Exception ex)
+                {
+                    _log?.Invoke("pipe handle error: " + ex.Message);
+                }
+                finally
+                {
+                    accepted.Dispose();
+                    try { _slots.Release(); } catch (ObjectDisposedException) { /* server shutting down */ }
+                }
+            }, CancellationToken.None);
         }
     }
 
@@ -135,5 +169,6 @@ public sealed class PipeServer : IDisposable
         _cts.Cancel();
         try { _loop?.Wait(2000); } catch { }
         _cts.Dispose();
+        _slots.Dispose();
     }
 }

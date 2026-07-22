@@ -25,6 +25,9 @@ public sealed class StepWindHost : IDisposable
     private readonly Action<string>? _log;
     private readonly RealFileSystemActions _fs = new();
     private readonly object _watchLock = new();
+    // Guards the RootOwners map so the concurrent pipe server's parallel authorization reads
+    // can't race a SetSettings write (Dictionary is not safe for concurrent read+write).
+    private readonly object _ownersLock = new();
     private readonly MigratingBlobCodec? _migCodec;
     private readonly CancellationTokenSource _lifetime = new();
     private StorageGuard _storage;
@@ -217,7 +220,10 @@ public sealed class StepWindHost : IDisposable
                 _log?.Invoke($"root-owner backfill for '{root}': {ex.Message} (left unscoped)");
             }
 
-            _settings.RootOwners[leaf] = owners;
+            lock (_ownersLock)
+            {
+                _settings.RootOwners[leaf] = owners;
+            }
         }
     }
 
@@ -299,8 +305,17 @@ public sealed class StepWindHost : IDisposable
         return null;
     }
 
+    /// <summary>A thread-safe snapshot of the recorded owner SIDs for a root segment (or null if none).</summary>
+    private IReadOnlyList<string>? OwnersSnapshot(string firstSegment)
+    {
+        lock (_ownersLock)
+        {
+            return _settings.RootOwners.TryGetValue(firstSegment, out List<string>? owners) ? [.. owners] : null;
+        }
+    }
+
     private bool CallerCanAccessSegment(CallerContext caller, string firstSegment)
-        => RootAccess.CanAccess(caller, firstSegment, _settings.RootOwners, RootPathForSegment(firstSegment));
+        => RootAccess.CanAccess(caller, OwnersSnapshot(firstSegment), RootPathForSegment(firstSegment));
 
     private bool CallerCanAccessRelative(CallerContext caller, string relativePath)
         => CallerCanAccessSegment(caller, FirstSegment(NormalizeRel(relativePath)));
@@ -392,7 +407,7 @@ public sealed class StepWindHost : IDisposable
         }
 
         return [.. _settings.WatchedFolders.Where(root =>
-            RootAccess.CanAccess(caller, System.IO.Path.GetFileName(root) ?? root, _settings.RootOwners, root))];
+            RootAccess.CanAccess(caller, OwnersSnapshot(System.IO.Path.GetFileName(root) ?? root), root))];
     }
 
     private static long SafeFileLength(string path)
@@ -790,7 +805,7 @@ public sealed class StepWindHost : IDisposable
             foreach (string removed in oldFolders.Where(f => !newSet.Contains(f)))
             {
                 string leaf = System.IO.Path.GetFileName(removed) ?? removed;
-                if (!RootAccess.CanAccess(caller, leaf, _settings.RootOwners, removed))
+                if (!RootAccess.CanAccess(caller, OwnersSnapshot(leaf), removed))
                 {
                     return IpcResponse.Fail($"Can't stop protecting '{removed}': it belongs to another user.");
                 }
@@ -809,18 +824,21 @@ public sealed class StepWindHost : IDisposable
         }
 
         var oldSet = new HashSet<string>(oldFolders, StringComparer.OrdinalIgnoreCase);
-        foreach (string added in newFolders.Where(f => !oldSet.Contains(f)))
+        lock (_ownersLock)
         {
-            string leaf = System.IO.Path.GetFileName(added) ?? added;
-            if (!_settings.RootOwners.TryGetValue(leaf, out List<string>? owners))
+            foreach (string added in newFolders.Where(f => !oldSet.Contains(f)))
             {
-                owners = [];
-                _settings.RootOwners[leaf] = owners;
-            }
+                string leaf = System.IO.Path.GetFileName(added) ?? added;
+                if (!_settings.RootOwners.TryGetValue(leaf, out List<string>? owners))
+                {
+                    owners = [];
+                    _settings.RootOwners[leaf] = owners;
+                }
 
-            if (!owners.Contains(sid, StringComparer.OrdinalIgnoreCase))
-            {
-                owners.Add(sid);
+                if (!owners.Contains(sid, StringComparer.OrdinalIgnoreCase))
+                {
+                    owners.Add(sid);
+                }
             }
         }
     }

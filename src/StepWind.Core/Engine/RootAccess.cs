@@ -23,9 +23,12 @@ namespace StepWind.Core.Engine;
 [SupportedOSPlatform("windows")]
 public static class RootAccess
 {
-    /// <summary>Can this caller read/restore/purge the history under <paramref name="firstSegment"/>?</summary>
-    public static bool CanAccess(CallerContext caller, string firstSegment,
-        IReadOnlyDictionary<string, List<string>> owners, string? currentRootPath)
+    /// <summary>
+    /// Can this caller read/restore/purge the history for a root? <paramref name="ownersForRoot"/>
+    /// is a SNAPSHOT of that root's owner SIDs (the caller resolves it under a lock and passes a
+    /// copy, so this stays safe under the concurrent pipe server).
+    /// </summary>
+    public static bool CanAccess(CallerContext caller, IReadOnlyList<string>? ownersForRoot, string? currentRootPath)
     {
         if (caller.IsPrivileged)
         {
@@ -33,8 +36,8 @@ public static class RootAccess
         }
 
         if (caller.UserSid is { Length: > 0 } sid
-            && owners.TryGetValue(firstSegment, out List<string>? list)
-            && list.Contains(sid, StringComparer.OrdinalIgnoreCase))
+            && ownersForRoot is not null
+            && ownersForRoot.Contains(sid, StringComparer.OrdinalIgnoreCase))
         {
             return true;
         }
