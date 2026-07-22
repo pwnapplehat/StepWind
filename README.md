@@ -164,7 +164,7 @@ tests/                 deterministic Core tests
 
 ## Verified
 
-- **217 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+- **241 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
   integrity, encryption round-trip & tamper rejection, DPAPI key stability, live encryption
   toggling (mixed-store reads, background re-encode convergence in both directions,
   interrupted-migration recovery, storage byte tracking, the IPC toggle end-to-end), USN
@@ -184,7 +184,11 @@ tests/                 deterministic Core tests
   can't read/restore/purge another's history, forged undo handles are rejected, machine-wide
   wipe needs admin), the **fail-closed updater** (missing/mismatched checksum refused,
   filename-matched sums, unsigned setup never launched), and the **disk-full guard**
-  (capture pauses and resumes around a free-space floor and store quota).
+  (capture pauses and resumes around a free-space floor and store quota), **USN gap detection**
+  (a wrapped/truncated journal resyncs loudly instead of dropping operations), **store
+  verify/repair** + index backup (damaged versions are found and quarantined, the good ones kept),
+  **encryption recovery-key** export/import (survives an OS reinstall), **batch undo** (per-item
+  results, never stops halfway), **long-path** capture, and the **resync policy**.
 - **Real-hardware E2E** (elevated): a scripted create/rename/move/delete is reconstructed
   from the live journal, the move is reversed (folder back in one click), and a version is
   restored byte-exact after overwrite+delete — all through the production classes. The

@@ -6,6 +6,30 @@ All notable changes to StepWind are documented here.
 
 Initial release — an undo button for your whole PC (and a safety net for AI coding agents).
 
+- **Trustworthy updates without a paid certificate.** A verified-but-unsigned release is no
+  longer run silently as SYSTEM — it's downloaded, checksum-verified, ACL-locked, and offered as a
+  one-click install (you approve the normal Windows prompt). A trusted code-signed release still
+  installs silently. Releases now publish `SHA256SUMS.txt` and a GitHub Release automatically, with
+  a winget manifest generator and a documented path to free code signing (SignPath Foundation).
+- **Tray notifications + honest status.** The tray warns when protection stops, when capturing
+  pauses for low disk space, or when an update is ready, keeps its tooltip current, and a second
+  launch brings the window forward instead of doing nothing.
+- **Reliability engineering.** USN journal wrap/truncation is detected and resynced loudly
+  instead of silently dropping operations; a store integrity check runs at startup with a
+  Settings **Check history store** (verify + repair, quarantining only unrestorable versions) and
+  an automatic index backup; the timeline honestly shows which drives it covers (fixed NTFS only)
+  and files currently held open by another program; deeply-nested (>260-char) files are versioned.
+- **Encryption recovery key.** Export a passphrase-protected copy of the store key
+  (`stepwind-cli export-recovery-key`) so encrypted history survives an OS reinstall or disk move;
+  `recover-verify` confirms it unlocks the store.
+- **Batch undo.** Undo a whole bulk move/rename from the timeline in one click, with a per-item
+  report (nothing is ever overwritten, and a partial failure never silently stops the rest).
+- **Diagnostics export.** Settings → About → **Export diagnostics** saves a support bundle
+  (configuration + health only — no file names or contents).
+- **[Documented, not yet implemented]** Encrypting the version index (file names/dates) itself is
+  a planned follow-up; today encryption protects file *contents*, and the threat model says so
+  plainly (see SECURITY.md).
+
 - **Delete-undo is real, end to end.** A newly created file is now baselined within a moment of
   creation (a fast create-capture path), so a file created and deleted inside the debounce quiet
   window still leaves a restorable version instead of nothing. The timeline shows a one-click
