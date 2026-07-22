@@ -80,7 +80,60 @@ public partial class MainWindow : Window
     /// CoreWebView2Environment" crash seen live. Caching the Task makes every caller await
     /// the same single initialization.
     /// </summary>
-    private Task InitWebAsync() => _webInit ??= InitWebCoreAsync();
+    private Task InitWebAsync() => _webInit ??= InitWebGuardedAsync();
+
+    /// <summary>
+    /// Wraps web init so a transient WebView2 failure doesn't brick the window forever: the naive
+    /// cached-task approach would keep handing every caller the SAME faulted task. On failure we
+    /// clear the cache (so Retry re-attempts) and show a WPF fallback with Retry + install-runtime,
+    /// rather than a permanently blank window. Protection keeps running in the service regardless.
+    /// </summary>
+    private async Task InitWebGuardedAsync()
+    {
+        try
+        {
+            await InitWebCoreAsync();
+            Dispatcher.Invoke(() =>
+            {
+                WebFail.Visibility = Visibility.Collapsed;
+                Web.Visibility = Visibility.Visible;
+            });
+        }
+        catch (Exception ex)
+        {
+            _webInit = null; // don't cache the failure — allow a real retry
+            Dispatcher.Invoke(() =>
+            {
+                WebFailMsg.Text = "The web view runtime didn't load: " + ex.Message;
+                Web.Visibility = Visibility.Collapsed;
+                WebFail.Visibility = Visibility.Visible;
+            });
+        }
+    }
+
+    private void OnWebRetry(object sender, RoutedEventArgs e)
+    {
+        WebFail.Visibility = Visibility.Collapsed;
+        Web.Visibility = Visibility.Visible;
+        _ = InitWebAsync();
+    }
+
+    private void OnInstallRuntime(object sender, RoutedEventArgs e)
+    {
+        // Prefer the installer-bundled bootstrapper if it shipped beside us; otherwise send the
+        // user to Microsoft's official runtime download. Either way the user drives the install.
+        try
+        {
+            string bundled = Path.Combine(AppContext.BaseDirectory, "redist", "MicrosoftEdgeWebView2Setup.exe");
+            string target = File.Exists(bundled) ? bundled : "https://developer.microsoft.com/microsoft-edge/webview2/";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(target) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Couldn't start the WebView2 runtime installer:\n\n" + ex.Message,
+                "StepWind", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     private async Task InitWebCoreAsync()
     {

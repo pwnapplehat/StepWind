@@ -1,4 +1,5 @@
 ﻿using System.Runtime.Versioning;
+using System.Text.Json;
 using StepWind.Core.Journal;
 using StepWind.Core.Storage;
 
@@ -22,8 +23,84 @@ return args.FirstOrDefault()?.ToLowerInvariant() switch
     "purge" => Purge(args.ElementAtOrDefault(1)),
     "export-recovery-key" => ExportRecoveryKey(args.ElementAtOrDefault(1), args.ElementAtOrDefault(2)),
     "recover-verify" => RecoverVerify(args.ElementAtOrDefault(1), args.ElementAtOrDefault(2), args.ElementAtOrDefault(3)),
+
+    // ── scriptable product verbs (thin pass-throughs to the service; all print JSON) ──
+    "status" => Call(StepWind.Core.Ipc.IpcCommand.GetStatus),
+    "timeline" => Call(StepWind.Core.Ipc.IpcCommand.GetTimeline, limit: int.TryParse(args.ElementAtOrDefault(1), out int tl) ? tl : 50),
+    "history" => Call(StepWind.Core.Ipc.IpcCommand.GetHistory, a1: Arg(args, 1)),
+    "read" => Call(StepWind.Core.Ipc.IpcCommand.GetVersionContent, a1: Arg(args, 1)),
+    "diff" => Call(StepWind.Core.Ipc.IpcCommand.DiffVersions, a1: Arg(args, 1), a2: Arg(args, 2)),
+    "checkpoint" => Call(StepWind.Core.Ipc.IpcCommand.CaptureNow, a1: Arg(args, 1)),
+    "undo" => Call(StepWind.Core.Ipc.IpcCommand.ReverseOperation, a1: Arg(args, 1)),
+    "restore" => Call(StepWind.Core.Ipc.IpcCommand.RestoreVersion, a1: Arg(args, 1)),
+    "verify" => Call(StepWind.Core.Ipc.IpcCommand.VerifyStore, a1: args.Contains("--deep") ? "deep" : null),
+    "repair" => Call(StepWind.Core.Ipc.IpcCommand.RepairStore, a1: args.Contains("--deep") ? "deep" : null),
+    "protect" => ProtectFolder(Arg(args, 1), add: true),
+    "unprotect" => ProtectFolder(Arg(args, 1), add: false),
     _ => Help(),
 };
+
+static string? Arg(string[] a, int i) => a.ElementAtOrDefault(i);
+
+// Thin pass-through: send one command to the running service and print its JSON (or ERR).
+// This is the whole point of the product CLI — no engine logic here, just the pipe contract.
+static int Call(StepWind.Core.Ipc.IpcCommand cmd, string? a1 = null, string? a2 = null, int limit = 200)
+{
+    var client = new StepWind.Core.Ipc.PipeClient();
+    StepWind.Core.Ipc.IpcResponse r = client.SendAsync(
+        new StepWind.Core.Ipc.IpcRequest { Command = cmd, Arg1 = a1, Arg2 = a2, Limit = limit }).GetAwaiter().GetResult();
+    Console.WriteLine(r.Ok ? (r.Json ?? "null") : "ERR: " + r.Error);
+    return r.Ok ? 0 : 1;
+}
+
+// protect/unprotect: read the current folder set, add or remove one, write it back. The service
+// authorizes the change against the calling (elevated) user, exactly as the GUI's is authorized.
+static int ProtectFolder(string? folder, bool add)
+{
+    if (string.IsNullOrWhiteSpace(folder))
+    {
+        Console.WriteLine($"usage: stepwind-cli {(add ? "protect" : "unprotect")} <folder-path>");
+        return 1;
+    }
+
+    string full = Path.GetFullPath(folder).TrimEnd('\\', '/');
+    var client = new StepWind.Core.Ipc.PipeClient();
+    StepWind.Core.Ipc.IpcResponse get = client.SendAsync(
+        new StepWind.Core.Ipc.IpcRequest { Command = StepWind.Core.Ipc.IpcCommand.GetSettings }).GetAwaiter().GetResult();
+    if (!get.Ok || get.Json is null)
+    {
+        Console.WriteLine("ERR: " + (get.Error ?? "could not read settings"));
+        return 1;
+    }
+
+    using JsonDocument doc = JsonDocument.Parse(get.Json);
+    var folders = doc.RootElement.GetProperty("WatchedFolders").EnumerateArray()
+        .Select(e => e.GetString()!).Where(s => s.Length > 0)
+        .ToList();
+
+    bool present = folders.Any(f => f.Equals(full, StringComparison.OrdinalIgnoreCase));
+    if (add && !present)
+    {
+        folders.Add(full);
+    }
+    else if (!add && present)
+    {
+        folders.RemoveAll(f => f.Equals(full, StringComparison.OrdinalIgnoreCase));
+    }
+    else
+    {
+        Console.WriteLine(add ? "Already protected." : "Not protected.");
+        return 0;
+    }
+
+    StepWind.Core.Ipc.IpcResponse set = client.SendAsync(new StepWind.Core.Ipc.IpcRequest
+    {
+        Command = StepWind.Core.Ipc.IpcCommand.SetSettings,
+        Arg1 = JsonSerializer.Serialize(new { WatchedFolders = folders }),
+    }).GetAwaiter().GetResult();
+    Console.WriteLine(set.Ok ? (set.Json ?? "ok") : "ERR: " + set.Error);
+    return set.Ok ? 0 : 1;
+}
 
 // Exports a passphrase-protected copy of the store's encryption key, so encrypted history
 // survives an OS reinstall / disk move (which makes the DPAPI-sealed live key unwrappable).
@@ -205,19 +282,33 @@ static int Probe()
 static int Help()
 {
     Console.WriteLine("""
-        StepWind CLI (admin required)
-          stepwind-cli journal <C:> [n]              print recent reconstructed file operations
+        StepWind CLI — scriptable access to the running service (JSON output). Admin recommended.
+
+        Read / query:
+          stepwind-cli status                        protection status (JSON)
+          stepwind-cli timeline [n]                  recent file operations across all drives
+          stepwind-cli history <relativePath>        every saved version of a file
+          stepwind-cli read <selector>               a version's text ('rel|ticks'|latest:rel|current:rel)
+          stepwind-cli diff <oldSel> <newSel>        unified diff between two selectors
+          stepwind-cli recent                        recently-changed protected files
+          stepwind-cli settings                      the service's settings
+          stepwind-cli verify [--deep]               history-store integrity check
+        Act:
+          stepwind-cli checkpoint <path>             force an immediate version of a file
+          stepwind-cli undo <operationId>            reverse a move/rename from the timeline
+          stepwind-cli restore <versionId>           restore a saved version (never overwrites)
+          stepwind-cli protect <folder>              start protecting a folder
+          stepwind-cli unprotect <folder>            stop protecting a folder (history kept)
+          stepwind-cli repair [--deep]               quarantine unrestorable versions (admin)
+          stepwind-cli purge "*"|unprotected|<prefix>  delete stored history (destructive)
+          stepwind-cli set-encryption on|off         toggle store encryption
+        Recovery (admin):
+          stepwind-cli export-recovery-key <passphrase> <out-file>
+          stepwind-cli recover-verify <recovery-file> <passphrase> [store-root]
+        Diagnostics:
+          stepwind-cli journal <C:> [n]              raw reconstructed operations from the journal
           stepwind-cli e2e                           real-hardware end-to-end validation
           stepwind-cli probe                         resolve-directory self-test
-          stepwind-cli settings                      print the running service's settings
-          stepwind-cli recent                        print recently-changed protected files
-          stepwind-cli set-encryption on|off         toggle store encryption on the service
-          stepwind-cli purge "*"|unprotected|<prefix>  delete stored history (destructive)
-          stepwind-cli export-recovery-key <passphrase> <out-file>
-                                                     export a passphrase-protected recovery key
-                                                     (survives OS reinstall / disk move)
-          stepwind-cli recover-verify <recovery-file> <passphrase> [store-root]
-                                                     check a recovery key unlocks the store
         """);
     return 0;
 }
