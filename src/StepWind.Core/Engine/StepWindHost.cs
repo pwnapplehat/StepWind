@@ -237,7 +237,8 @@ public sealed class StepWindHost : IDisposable
         }
 
         return new WatchEngine(_store, exclusions, _settings.WatchedFolders, _log,
-            canCapture: () => !_storageState.Paused);
+            canCapture: () => !_storageState.Paused,
+            respectGitIgnore: () => _settings.RespectGitIgnore);
     }
 
     /// <summary>
@@ -559,6 +560,7 @@ public sealed class StepWindHost : IDisposable
         _settings.EncryptionEnabled,
         _settings.FirstRunCompleted,
         _settings.TimelineProtectedOnly,
+        _settings.RespectGitIgnore,
         _settings.MinFreeDiskBytes,
         _settings.MaxStoreBytes,
         RetentionKeepAllHours = _settings.Retention.KeepAllHours,
@@ -577,6 +579,7 @@ public sealed class StepWindHost : IDisposable
         public bool? EncryptionEnabled { get; set; }
         public bool? FlightRecorderEnabled { get; set; }
         public bool? TimelineProtectedOnly { get; set; }
+        public bool? RespectGitIgnore { get; set; }
         public long? MinFreeDiskBytes { get; set; }
         public long? MaxStoreBytes { get; set; }
         public int? RetentionKeepAllHours { get; set; }
@@ -675,6 +678,11 @@ public sealed class StepWindHost : IDisposable
         if (patch.TimelineProtectedOnly is bool tpo)
         {
             _settings.TimelineProtectedOnly = tpo;
+        }
+
+        if (patch.RespectGitIgnore is bool rgi)
+        {
+            _settings.RespectGitIgnore = rgi; // read live by the watch engine — no rebuild needed
         }
 
         bool storageChanged = false;

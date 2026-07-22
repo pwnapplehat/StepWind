@@ -38,7 +38,8 @@ public sealed class Bridge(MainWindow window)
     private static readonly HashSet<string> AllowedSettingsKeys = new(StringComparer.Ordinal)
     {
         "WatchedFolders", "ExcludedPrefixes", "AutoUpdateEnabled", "EncryptionEnabled",
-        "FlightRecorderEnabled", "TimelineProtectedOnly", "MinFreeDiskBytes", "MaxStoreBytes",
+        "FlightRecorderEnabled", "TimelineProtectedOnly", "RespectGitIgnore",
+        "MinFreeDiskBytes", "MaxStoreBytes",
         "RetentionKeepAllHours",
         "RetentionHourlyDays", "RetentionDailyDays", "RetentionMaxAgeDays", "RetentionMaxVersionsPerFile",
     };

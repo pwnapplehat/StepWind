@@ -69,6 +69,13 @@ public sealed class StepWindSettings
     /// <summary>Timeline display scope: true = only operations inside protected folders.</summary>
     public bool TimelineProtectedOnly { get; set; }
 
+    /// <summary>
+    /// When on, files matched by a protected folder's repo-root <c>.gitignore</c> are not
+    /// versioned (on top of the always-on build-junk exclusions). Off by default: not versioning
+    /// a file is a protection gap, so honoring .gitignore is the user's explicit choice.
+    /// </summary>
+    public bool RespectGitIgnore { get; set; }
+
     public static string DefaultRoot =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StepWind");
 

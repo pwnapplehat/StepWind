@@ -71,13 +71,19 @@ public sealed class WatchEngine : IDisposable
     /// </summary>
     private readonly Func<bool>? _canCapture;
 
+    /// <summary>Read live so toggling "respect .gitignore" in Settings takes effect without a rebuild.</summary>
+    private readonly Func<bool>? _respectGitIgnore;
+    private readonly ConcurrentDictionary<string, GitIgnoreMatcher?> _gitIgnore = new(StringComparer.OrdinalIgnoreCase);
+
     public WatchEngine(VersionStore store, PathExclusions exclusions, IEnumerable<string> roots,
-        Action<string>? log = null, TimeSpan? quietPeriod = null, Func<bool>? canCapture = null)
+        Action<string>? log = null, TimeSpan? quietPeriod = null, Func<bool>? canCapture = null,
+        Func<bool>? respectGitIgnore = null)
     {
         _store = store;
         _exclusions = exclusions;
         _log = log;
         _canCapture = canCapture;
+        _respectGitIgnore = respectGitIgnore;
         _roots = [.. roots.Where(Directory.Exists)];
         _debouncer = new ChangeDebouncer { QuietPeriod = quietPeriod ?? TimeSpan.FromSeconds(2) };
 
@@ -306,6 +312,11 @@ public sealed class WatchEngine : IDisposable
                 return false;
             }
 
+            if (IsGitIgnored(fullPath))
+            {
+                return false;
+            }
+
             string? rel = RelativeToRoot(fullPath);
             if (rel is null)
             {
@@ -398,8 +409,13 @@ public sealed class WatchEngine : IDisposable
                         continue;
                     }
 
-                    var info = new FileInfo(path);
+                    var info = new FileInfo(Storage.LongPath.Of(path));
                     if (!_exclusions.ShouldVersion(path, info.Attributes, info.Length))
+                    {
+                        continue;
+                    }
+
+                    if (IsGitIgnored(path))
                     {
                         continue;
                     }
@@ -436,6 +452,34 @@ public sealed class WatchEngine : IDisposable
         }
 
         return captured;
+    }
+
+    /// <summary>
+    /// True if the user opted into honoring .gitignore AND the file sits in a git repo whose
+    /// root .gitignore ignores it. Matchers are cached per repo root. Any hiccup = not ignored
+    /// (fail-open: we'd rather over-protect than silently skip a file).
+    /// </summary>
+    private bool IsGitIgnored(string fullPath)
+    {
+        if (_respectGitIgnore is null || !_respectGitIgnore())
+        {
+            return false;
+        }
+
+        string? repoRoot = Storage.GitInfo.RepoRoot(fullPath);
+        if (repoRoot is null)
+        {
+            return false;
+        }
+
+        GitIgnoreMatcher? matcher = _gitIgnore.GetOrAdd(repoRoot, static r => GitIgnoreMatcher.ForRepo(r));
+        if (matcher is null)
+        {
+            return false;
+        }
+
+        string rel = Path.GetRelativePath(repoRoot, fullPath).Replace('\\', '/');
+        return matcher.IsIgnored(rel);
     }
 
     private static string NormalizeRel(string rel) => rel.Replace('\\', '/').TrimStart('/');

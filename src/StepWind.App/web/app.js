@@ -1114,6 +1114,11 @@ async function loadSettings() {
             <div class="set-sub">Deduplicated and compressed — old versions are garbage-collected automatically per the retention rules below.</div></div>
             <div class="set-value">${lastStatus ? `${(lastStatus.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(lastStatus.StoreBytes)}` : "—"}</div>
           </div>
+          <div class="set-row">
+            <div><div class="set-title">Respect <span class="mono" style="font-size:11px">.gitignore</span></div>
+            <div class="set-sub">In a protected folder that's a git repo, also skip files its <span class="mono" style="font-size:11px">.gitignore</span> lists (on top of the automatic build-junk skips). Off by default — turning it on means those files won't have version history.</div></div>
+            ${sw("sw-gitignore", s?.RespectGitIgnore)}
+          </div>
           ${renderCoverageRow()}
           ${renderLockedRow()}
         </div>
@@ -1207,6 +1212,7 @@ async function loadSettings() {
     }
   };
   wireSwitch("sw-fr", (on) => patchAndReload({ FlightRecorderEnabled: on }, true));
+  wireSwitch("sw-gitignore", (on) => patchAndReload({ RespectGitIgnore: on }, false));
   wireSwitch("sw-enc", (on) => patchAndReload({ EncryptionEnabled: on }, true));
 
   $("#ret-apply", host).onclick = async () => {

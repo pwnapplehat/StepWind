@@ -59,6 +59,35 @@ public static class GitInfo
         }
     }
 
+    /// <summary>
+    /// The working-tree root (the directory that contains <c>.git</c>) for a path, or null if the
+    /// path isn't inside a git repo. Used to locate the repo's <c>.gitignore</c>.
+    /// </summary>
+    public static string? RepoRoot(string path)
+    {
+        try
+        {
+            string? dir = Directory.Exists(path) ? Path.GetFullPath(path) : Path.GetDirectoryName(Path.GetFullPath(path));
+            var current = dir is null ? null : new DirectoryInfo(dir);
+            while (current is not null)
+            {
+                if (Directory.Exists(Path.Combine(current.FullName, ".git"))
+                    || File.Exists(Path.Combine(current.FullName, ".git")))
+                {
+                    return current.FullName;
+                }
+
+                current = current.Parent;
+            }
+        }
+        catch
+        {
+            // ignore
+        }
+
+        return null;
+    }
+
     /// <summary>Walks up from <paramref name="dir"/> to find the repo's git directory (handles a `.git` file too).</summary>
     private static string? FindGitDir(string dir)
     {
