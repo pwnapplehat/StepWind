@@ -49,9 +49,33 @@ jobs:
         run: iscc installer\stepwind.iss
         shell: pwsh
 
+      # Upload the (as-built) installer as a CI artifact. Its id feeds the optional signing step.
+      - name: Upload installer (CI artifact)
+        id: upload_installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: StepWind-setup
+          path: installer/Output/*.exe
+
+      # Code signing via the FREE SignPath Foundation OSS program. Skipped unless the repo opted in
+      # (vars.ENABLE_SIGNING == 'true') and the SignPath project/token are configured — see
+      # docs/signing/SignPath-application.md. It signs the artifact uploaded above and writes the
+      # SIGNED installer back into installer/Output, so the checksums + release below cover it.
+      - name: Sign installer (SignPath)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_SIGNING == 'true' }}
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.upload_installer.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: installer/Output
+
       # SHA256SUMS.txt is what the in-app updater verifies a download against (filename-matched),
-      # so a release MUST ship it — the app refuses to update without it. Generated here so it
-      # always matches the exact artifact this run built.
+      # so a release MUST ship it — the app refuses to update without it. Computed AFTER signing so
+      # it matches the exact (signed, when enabled) artifact that ships.
       - name: Generate SHA256SUMS
         shell: pwsh
         run: |
@@ -62,17 +86,8 @@ jobs:
           } | Set-Content "$out/SHA256SUMS.txt" -Encoding ascii
           Get-Content "$out/SHA256SUMS.txt"
 
-      - name: Upload installer (CI artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: StepWind-setup
-          path: |
-            installer/Output/*.exe
-            installer/Output/SHA256SUMS.txt
-
       # On a version tag, publish the installer + checksums as a GitHub Release so the in-app
-      # updater (and winget) can find them. If/when SignPath signing is wired in, the signing
-      # step slots in right before this and the same SHA256SUMS covers the signed binary.
+      # updater (and winget) can find them.
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2

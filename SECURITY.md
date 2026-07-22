@@ -98,11 +98,14 @@ Compare it to the matching line in `SHA256SUMS.txt`.
 
 ## Code signing
 
-StepWind is not code-signed yet. Signing is planned via the **SignPath Foundation** free
+StepWind is not code-signed yet. Signing is set up to go via the **SignPath Foundation** free
 open-source program (OV certificate, key on their HSM, signature applied in CI only after they
-verify the binary was built from this public repo). Until then Windows SmartScreen will show
-"Windows protected your PC" for the installer — expected for a new, unsigned app, not a malware
-detection. Choose **More info → Run anyway**, and verify the SHA-256 as above.
+verify the binary was built from this public repo) — the step-by-step application and the
+already-wired CI switch are in
+[docs/signing/SignPath-application.md](docs/signing/SignPath-application.md). Until it's enabled,
+Windows SmartScreen will show "Windows protected your PC" for the installer — expected for a new,
+unsigned app, not a malware detection. Choose **More info → Run anyway**, and verify the SHA-256
+as above.
 
 ## Known limitations (honest)
 
