@@ -3,6 +3,9 @@ using System.Runtime.Versioning;
 
 namespace StepWind.Core.Journal;
 
+/// <summary>Snapshot of a volume's USN journal header (ids + the valid USN range).</summary>
+public readonly record struct UsnJournalState(ulong JournalId, long FirstUsn, long NextUsn, long LowestValidUsn, long MaxUsn);
+
 /// <summary>
 /// Reads the NTFS USN change journal for a volume (e.g. "C:"). Requires elevation, so this
 /// lives in the background service, not the GUI. Parses both V2 and V3 physical record layouts
@@ -42,6 +45,17 @@ public sealed class UsnJournalReader : IDisposable
     /// <summary>Journal id + the current end USN (a fresh tail should start here).</summary>
     public (ulong JournalId, long NextUsn) Query()
     {
+        UsnJournalState s = QueryState();
+        return (s.JournalId, s.NextUsn);
+    }
+
+    /// <summary>
+    /// Full journal state — including <c>LowestValidUsn</c>, which the caller compares against its
+    /// cursor to detect a wrap/overflow (records purged past the cursor) and resync loudly rather
+    /// than silently missing operations. See <see cref="UsnResyncPolicy"/>.
+    /// </summary>
+    public UsnJournalState QueryState()
+    {
         int size = Marshal.SizeOf<USN_JOURNAL_DATA_V0>();
         IntPtr buf = Marshal.AllocHGlobal(size);
         try
@@ -52,7 +66,7 @@ public sealed class UsnJournalReader : IDisposable
             }
 
             var data = Marshal.PtrToStructure<USN_JOURNAL_DATA_V0>(buf);
-            return (data.UsnJournalID, data.NextUsn);
+            return new UsnJournalState(data.UsnJournalID, data.FirstUsn, data.NextUsn, data.LowestValidUsn, data.MaxUsn);
         }
         finally
         {

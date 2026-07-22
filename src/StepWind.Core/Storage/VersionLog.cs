@@ -112,6 +112,52 @@ public sealed class VersionLog
         }
     }
 
+    /// <summary>
+    /// Snapshots the index to <c>versions.jsonl.bak</c> (atomic temp+rename). The index is the
+    /// single file that maps every version to its chunks; a corrupt or lost index orphans the
+    /// whole store, so a known-good copy is kept and refreshed on the retention pass and before
+    /// any destructive rewrite/repair. Best-effort; never throws into the caller.
+    /// </summary>
+    public void Backup()
+    {
+        try
+        {
+            if (!File.Exists(_path))
+            {
+                return;
+            }
+
+            string tmp = _path + ".bak.tmp";
+            File.Copy(_path, tmp, overwrite: true);
+            File.Move(tmp, _path + ".bak", overwrite: true);
+        }
+        catch
+        {
+            // best effort — a failed backup must never disrupt capture/retention
+        }
+    }
+
+    /// <summary>
+    /// Restores the index from its <c>.bak</c> snapshot (disaster recovery when the live index is
+    /// truncated/corrupt). Returns the number of versions recovered, or -1 if there's no backup.
+    /// </summary>
+    public int RestoreFromBackup()
+    {
+        string bak = _path + ".bak";
+        if (!File.Exists(bak))
+        {
+            return -1;
+        }
+
+        lock (_appendLock)
+        {
+            File.Copy(bak, _path, overwrite: true);
+            _versions.Clear();
+            Load();
+            return _versions.Count;
+        }
+    }
+
     private void Load()
     {
         if (!File.Exists(_path))

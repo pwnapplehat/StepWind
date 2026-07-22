@@ -44,7 +44,7 @@ public sealed class VersionStore
         DateTime modified;
         try
         {
-            modified = File.GetLastWriteTimeUtc(sourcePath);
+            modified = File.GetLastWriteTimeUtc(LongPath.Of(sourcePath));
         }
         catch
         {
@@ -175,7 +175,7 @@ public sealed class VersionStore
     }
 
     private static FileStream OpenShared(string path)
-        => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        => new(LongPath.Of(path), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
     private static string NormalizePath(string relativePath)
         => relativePath.Replace('\\', '/').TrimStart('/');

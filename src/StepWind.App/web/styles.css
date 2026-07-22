@@ -432,6 +432,17 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
    and also reveal Undo when its row has keyboard focus (accessibility: not mouse-only). */
 .tl-row:focus-within .tl-undo { opacity: 1; transform: none; }
 .tl-restore { flex-shrink: 0; }
+/* timeline coverage chips (Settings → Protection) */
+.cov-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cov {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--line); color: var(--text-2); background: var(--panel);
+}
+.cov-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--text-3); }
+.cov.on .cov-dot { background: var(--ok); }
+.cov.off { color: var(--text-3); }
+.cov-fs { color: var(--text-3); font-size: 10.5px; }
 .tl-norecover {
   flex-shrink: 0; font-size: 11px; color: var(--text-3);
   font-style: italic; white-space: nowrap;

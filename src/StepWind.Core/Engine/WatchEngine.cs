@@ -268,7 +268,9 @@ public sealed class WatchEngine : IDisposable
                 return false; // storage paused (e.g. disk nearly full) — reconcile re-captures later
             }
 
-            var info = new FileInfo(fullPath);
+            // Read attributes via the extended-length path so a deep (>260-char) file is versioned
+            // rather than throwing PathTooLong; exclusions/relative-path use the plain path.
+            var info = new FileInfo(Storage.LongPath.Of(fullPath));
             if (!_exclusions.ShouldVersion(fullPath, info.Attributes, info.Length))
             {
                 return false;

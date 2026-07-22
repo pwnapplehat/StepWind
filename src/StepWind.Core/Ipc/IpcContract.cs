@@ -37,6 +37,9 @@ public enum IpcCommand
     GetVersionContent = 12, // read one version's (or the live file's) text — Arg1 = selector
     DiffVersions = 13,       // unified diff between two selectors — Arg1 = old, Arg2 = new
     CaptureNow = 14,         // force an immediate checkpoint of one file — Arg1 = path/selector
+
+    VerifyStore = 15,        // integrity check of the history store (Arg1 = "deep" for re-hash)
+    RepairStore = 16,        // quarantine unrestorable versions + sweep orphans (admin; Arg1 = "deep")
 }
 
 public sealed record IpcRequest

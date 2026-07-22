@@ -72,10 +72,22 @@ public sealed class StepWindHost : IDisposable
         }
 
         // Catch up on anything that changed while the service was stopped (background so
-        // startup isn't blocked by a large first-run scan).
+        // startup isn't blocked by a large first-run scan). A quick (shallow) integrity check
+        // runs first so a damaged store is noticed and reported at startup, not at restore time.
         WatchEngine watchForReconcile = _watch;
         _ = Task.Run(() =>
         {
+            try
+            {
+                VerifyReport report = _store.RunExclusive(() => StoreMaintenance.Verify(_store.Log, _store.Blobs, deep: false));
+                if (report.UnrestorableVersions > 0 || report.OrphanBlobs > 0)
+                {
+                    _log?.Invoke($"store check: {report.UnrestorableVersions} damaged version(s), {report.OrphanBlobs} orphan blob(s) " +
+                                 "— run a repair from Settings to clean up.");
+                }
+            }
+            catch (Exception ex) { _log?.Invoke("startup store check failed: " + ex.Message); }
+
             try { watchForReconcile.Reconcile(); }
             catch (Exception ex) { _log?.Invoke("catch-up failed: " + ex.Message); }
         });
@@ -250,6 +262,8 @@ public sealed class StepWindHost : IDisposable
                 IpcCommand.GetVersionContent => GetVersionContent(request.Arg1 ?? "", caller),
                 IpcCommand.DiffVersions => DiffVersionsCommand(request.Arg1 ?? "", request.Arg2 ?? "", caller),
                 IpcCommand.CaptureNow => CaptureNowCommand(request.Arg1 ?? "", caller),
+                IpcCommand.VerifyStore => VerifyStoreCommand(request.Arg1), // read-only health check
+                IpcCommand.RepairStore => RequirePrivilege(caller) ?? RepairStoreCommand(request.Arg1),
                 _ => IpcResponse.Fail("unsupported command"),
             };
         }
@@ -319,8 +333,50 @@ public sealed class StepWindHost : IDisposable
             FreeDiskBytes = storage.FreeBytes,
             UpdateReadyVersion = update?.Version,
             UpdateReadyPath = update?.SetupPath,
+            Volumes = BuildVolumeCoverage(),
             WatchedFolders = folders,
         };
+    }
+
+    /// <summary>
+    /// Which drives the whole-machine timeline actually covers. The flight recorder monitors
+    /// fixed NTFS volumes only; removable, network, ReFS and exFAT drives are NOT recorded — this
+    /// makes that honest in the UI instead of a silent gap the user discovers the hard way.
+    /// </summary>
+    private object[] BuildVolumeCoverage()
+    {
+        bool recorderOn = _flightRecorder is not null;
+        var list = new List<object>();
+        foreach (DriveInfo d in DriveInfo.GetDrives())
+        {
+            try
+            {
+                if (!d.IsReady)
+                {
+                    continue;
+                }
+
+                bool fixedNtfs = d.DriveType == DriveType.Fixed && d.DriveFormat == "NTFS";
+                bool monitored = fixedNtfs && recorderOn;
+                string note = fixedNtfs
+                    ? (recorderOn ? "Covered by the timeline" : "Flight recorder is off")
+                    : $"{d.DriveType} {d.DriveFormat} drives aren't recorded";
+                list.Add(new
+                {
+                    Name = d.Name.TrimEnd('\\'),
+                    FileSystem = d.DriveFormat,
+                    Type = d.DriveType.ToString(),
+                    Monitored = monitored,
+                    Note = note,
+                });
+            }
+            catch
+            {
+                // a drive that vanished mid-enumeration — skip it
+            }
+        }
+
+        return [.. list];
     }
 
     /// <summary>The watched folders this caller may see (all of them for a privileged caller).</summary>
@@ -1236,6 +1292,24 @@ public sealed class StepWindHost : IDisposable
         return IpcResponse.Success(JsonSerializer.Serialize(r));
     }
 
+    private IpcResponse VerifyStoreCommand(string? arg)
+    {
+        bool deep = string.Equals(arg, "deep", StringComparison.OrdinalIgnoreCase);
+        VerifyReport report = _store.RunExclusive(() => StoreMaintenance.Verify(_store.Log, _store.Blobs, deep));
+        _log?.Invoke($"store verify ({(deep ? "deep" : "quick")}): {report.OkVersions}/{report.TotalVersions} restorable, " +
+                     $"{report.UnrestorableVersions} damaged, {report.OrphanBlobs} orphan blob(s)");
+        return Ok(report);
+    }
+
+    private IpcResponse RepairStoreCommand(string? arg)
+    {
+        bool deep = string.Equals(arg, "deep", StringComparison.OrdinalIgnoreCase);
+        VerifyReport report = _store.RunExclusive(() => StoreMaintenance.Repair(_store.Log, _store.Blobs, deep));
+        RefreshStorageState(); // repair frees space
+        _log?.Invoke($"store repair ({(deep ? "deep" : "quick")}): removed {report.RemovedVersions} unrestorable version(s), swept {report.SweptBlobs} blob(s)");
+        return Ok(report);
+    }
+
     /// <summary>
     /// Deletes stored versions NOW — the user's data, the user's call. Selector:
     ///   "*"            everything (the whole history store);
@@ -1369,8 +1443,11 @@ public sealed class StepWindHost : IDisposable
     {
         // Exclusive with captures: GC's mark-and-sweep must not race a capture's
         // write-blob→append-version window (see VersionStore._maintenanceGate).
-        RetentionResult r = _store.RunExclusive(
-            () => Retention.Apply(_store.Log, _store.Blobs, _settings.Retention, DateTime.UtcNow));
+        RetentionResult r = _store.RunExclusive(() =>
+        {
+            _store.Log.Backup(); // refresh the known-good index snapshot alongside the daily pass
+            return Retention.Apply(_store.Log, _store.Blobs, _settings.Retention, DateTime.UtcNow);
+        });
         _log?.Invoke($"retention: kept {r.VersionsKept}/{r.VersionsBefore} versions, swept {r.BlobsSwept} blobs");
         return r;
     }

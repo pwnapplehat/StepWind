@@ -87,6 +87,8 @@ public sealed class Bridge(MainWindow window)
         "restore" => await PipeAsync(IpcCommand.RestoreVersion, Require(p, "versionId")),
         "runRetention" => await PipeAsync(IpcCommand.RunRetention),
         "purge" => await PipeAsync(IpcCommand.PurgeHistory, Require(p, "selector")),
+        "verifyStore" => await PipeAsync(IpcCommand.VerifyStore, p?["deep"]?.GetValue<bool>() == true ? "deep" : null),
+        "repairStore" => await PipeAsync(IpcCommand.RepairStore, p?["deep"]?.GetValue<bool>() == true ? "deep" : null),
         "patch" => await PatchSettingsAsync(p),
 
         // ── host: AI agents ──

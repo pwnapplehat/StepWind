@@ -296,6 +296,24 @@ function timelineAction(op) {
   return "<span></span>";
 }
 
+// Settings → Protection: which drives the whole-machine timeline actually covers. Honest about
+// the fixed-NTFS-only limitation instead of leaving it a silent gap.
+function renderCoverageRow() {
+  const vols = (lastStatus && lastStatus.Volumes) || [];
+  if (!vols.length) return "";
+  const chips = vols.map((v) =>
+    `<span class="cov ${v.Monitored ? "on" : "off"}" title="${esc(v.Note || "")}">` +
+    `<span class="cov-dot"></span>${esc(v.Name)} <span class="cov-fs">${esc(v.FileSystem || "")}</span></span>`).join("");
+  return `
+    <div class="set-row">
+      <div style="min-width:0">
+        <div class="set-title">Timeline coverage</div>
+        <div class="set-sub">The timeline records fixed NTFS drives. Removable, network, and ReFS/exFAT drives aren't recorded — protect specific folders on them for version history instead.</div>
+        <div class="cov-list">${chips}</div>
+      </div>
+    </div>`;
+}
+
 function renderTimeline(animate = false) {
   const host = $("#view-timeline");
   let ops = tlFilter === "All" ? tlOps : tlOps.filter((o) => o.Kind === tlFilter);
@@ -1055,6 +1073,7 @@ async function loadSettings() {
             <div class="set-sub">Deduplicated and compressed — old versions are garbage-collected automatically per the retention rules below.</div></div>
             <div class="set-value">${lastStatus ? `${(lastStatus.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(lastStatus.StoreBytes)}` : "—"}</div>
           </div>
+          ${renderCoverageRow()}
         </div>
       </div>
 
@@ -1086,6 +1105,11 @@ async function loadSettings() {
             <div><div class="set-title">Clean up unprotected history</div>
             <div class="set-sub">Deletes saved versions belonging to folders you no longer protect.</div></div>
             <button class="btn" id="dm-unprot" style="margin-left:auto;flex-shrink:0">Clean up</button>
+          </div>
+          <div class="set-row">
+            <div><div class="set-title">Check history store</div>
+            <div class="set-sub">Verifies every saved version can still be restored and reports wasted space. If anything's damaged, you can repair it (removes only the unrecoverable versions).</div></div>
+            <button class="btn" id="dm-verify" style="margin-left:auto;flex-shrink:0">Check now</button>
           </div>
           <div class="set-row">
             <div><div class="set-title" style="color:var(--danger-text)">Delete all history</div>
@@ -1180,6 +1204,36 @@ async function loadSettings() {
       await pollStatus();
       dlg.notice("Clean-up done", purgeSummary(res));
     } catch (err) { dlg.notice("Couldn't clean up", err.message); }
+  };
+
+  $("#dm-verify", host).onclick = async () => {
+    const btn = $("#dm-verify", host);
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = "Checking…";
+    try {
+      const r = await call("verifyStore", {});
+      const healthy = (r.UnrestorableVersions || 0) === 0;
+      const summary = `${(r.OkVersions || 0).toLocaleString()} of ${(r.TotalVersions || 0).toLocaleString()} versions are fully restorable.` +
+        (r.OrphanBlobs ? `\n${r.OrphanBlobs.toLocaleString()} unused chunk${r.OrphanBlobs === 1 ? "" : "s"} taking space.` : "");
+      if (healthy && !r.OrphanBlobs) {
+        dlg.notice("History store is healthy", summary);
+      } else {
+        const doRepair = await dlg.confirm(healthy ? "Reclaim wasted space?" : "Repair the history store?",
+          summary + (healthy ? "" : `\n\n${r.UnrestorableVersions.toLocaleString()} version${r.UnrestorableVersions === 1 ? "" : "s"} can't be restored (a saved piece is missing or corrupt). Repair removes only those records and frees the space; your good versions and your real files are untouched.`),
+          "Repair now", false);
+        if (doRepair) {
+          const rr = await call("repairStore", {});
+          await pollStatus();
+          dlg.notice("Repair complete", `Removed ${(rr.RemovedVersions || 0).toLocaleString()} unrecoverable version${rr.RemovedVersions === 1 ? "" : "s"} and freed ${(rr.SweptBlobs || 0).toLocaleString()} chunk${rr.SweptBlobs === 1 ? "" : "s"}.`);
+        }
+      }
+    } catch (err) {
+      dlg.notice("Couldn't check the store", err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = prev;
+    }
   };
 
   $("#dm-all", host).onclick = async () => {

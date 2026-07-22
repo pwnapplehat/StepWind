@@ -132,18 +132,30 @@ public sealed class FlightRecorder : IDisposable
     private void PollVolume(string volume)
     {
         using var reader = new UsnJournalReader(volume);
-        (ulong journalId, long endUsn) = reader.Query();
+        UsnJournalState state = reader.QueryState();
+        ulong journalId = state.JournalId;
 
-        Cursor cursor = _cursors.GetValueOrDefault(volume) ?? new Cursor(journalId, endUsn);
+        Cursor cursor = _cursors.GetValueOrDefault(volume) ?? new Cursor(journalId, state.NextUsn);
 
-        // Wrap / journal recreated: our cursor is meaningless → jump to the current end.
-        if (cursor.JournalId != journalId)
+        // Decide where to resume. A journal-id change (recreated) resyncs to the end; a cursor
+        // that has fallen behind the journal's lowest-valid USN means records were purged past us
+        // (overflow/wrap) — we resume from the lowest valid USN and say so LOUDLY, so a gap is
+        // reported instead of silently dropped (before, only a journal-id change was handled).
+        (long start, UsnResync kind) = UsnResyncPolicy.DecideStart(
+            cursor.JournalId, cursor.NextUsn, journalId, state.NextUsn, state.LowestValidUsn);
+
+        if (kind == UsnResync.JournalChanged)
         {
             _log?.Invoke($"{volume}: journal changed (wrap/reset) — resyncing to end");
-            cursor = new Cursor(journalId, endUsn);
+        }
+        else if (kind == UsnResync.GapTruncated)
+        {
+            _log?.Invoke($"{volume}: USN GAP — the change journal was truncated past our cursor " +
+                         $"(cursor {cursor.NextUsn} < lowest valid {state.LowestValidUsn}); some operations were missed. " +
+                         "Resyncing from the earliest still-recorded change.");
         }
 
-        (List<UsnRecord> records, long nextUsn) = reader.Read(journalId, cursor.NextUsn);
+        (List<UsnRecord> records, long nextUsn) = reader.Read(journalId, start);
         if (records.Count > 0)
         {
             var reconstructor = new OperationReconstructor(reader.ResolveDirectory);
