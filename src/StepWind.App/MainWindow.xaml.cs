@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private const uint VkZ = 0x5A;
 
     private readonly Bridge _bridge;
+    private readonly HostStatusMonitor _statusMonitor;
     private Task? _webInit;
     private HwndSource? _hotkeySource;
     private bool _reallyExit;
@@ -44,7 +45,32 @@ public partial class MainWindow : Window
         // First-run seeding must happen even when the app starts --minimized and is never
         // opened this session — it's pipe-only work, independent of the web layer.
         _ = _bridge.SeedDefaultFoldersOnFirstRunAsync();
+
+        // Watch protection state in the background so the tray can warn about a stopped service,
+        // a disk-full pause, or a ready update even while minimized — and keep the tooltip live.
+        _statusMonitor = new HostStatusMonitor(ShowTrayNotice, SetTrayTooltip);
+        _statusMonitor.Start();
+
+        // Bring the window up when a second launch signals us (foreground-on-relaunch).
+        App.SecondInstanceRequested += () => Dispatcher.Invoke(() => ShowFromTray());
     }
+
+    private void SetTrayTooltip(string text) => Dispatcher.Invoke(() => Tray.ToolTipText = text);
+
+    private void ShowTrayNotice(TrayNotice notice) => Dispatcher.Invoke(() =>
+    {
+        // Clicking the balloon opens StepWind (to the timeline for warnings — the "what happened").
+        void OpenOnce(object s, RoutedEventArgs args)
+        {
+            Tray.TrayBalloonTipClicked -= OpenOnce;
+            ShowFromTray(navigateTimeline: notice.Warning);
+        }
+
+        Tray.TrayBalloonTipClicked += OpenOnce;
+        Tray.ShowBalloonTip("StepWind — " + notice.Title, notice.Message,
+            notice.Warning ? Hardcodet.Wpf.TaskbarNotification.BalloonIcon.Warning
+                           : Hardcodet.Wpf.TaskbarNotification.BalloonIcon.Info);
+    });
 
     /// <summary>
     /// Idempotent web init. The naive "if (CoreWebView2 is null)" guard is NOT enough:
@@ -232,6 +258,7 @@ public partial class MainWindow : Window
             try { UnregisterHotKey(_hotkeySource.Handle, HotkeyId); _hotkeySource.Dispose(); } catch { }
         }
 
+        _statusMonitor.Dispose();
         Tray.Dispose();
         Close();
         Application.Current.Shutdown();
