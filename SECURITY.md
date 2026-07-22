@@ -57,6 +57,14 @@ protects blob *content* at rest** (a stolen/offline drive can't be read elsewher
 hide the index of names/dates from an administrator on the same machine, and it is not a
 cross-user privacy boundary — that is enforced by the authorization above.
 
+**Recovery key.** Because the live key is machine-DPAPI-sealed, an OS reinstall or moving the disk
+to another machine would otherwise orphan encrypted history forever. Export a passphrase-protected
+recovery key (elevated: `stepwind-cli export-recovery-key <passphrase> <file>`), keep it off the
+machine, and on a new machine `stepwind-cli recover-verify <file> <passphrase>` confirms it unlocks
+the store. The recovery file wraps the key with PBKDF2-SHA256 (600k iterations) + AES-256-GCM, so
+it's useless without the passphrase — but anyone with **both** the file and the passphrase can read
+the store, so treat it like the master secret it is.
+
 ## Updates are fail-closed
 
 The service checks GitHub for new releases and applies one **only** if:

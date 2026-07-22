@@ -20,8 +20,113 @@ return args.FirstOrDefault()?.ToLowerInvariant() switch
     "recent" => DumpRecent(),
     "set-encryption" => SetEncryption(args.ElementAtOrDefault(1)),
     "purge" => Purge(args.ElementAtOrDefault(1)),
+    "export-recovery-key" => ExportRecoveryKey(args.ElementAtOrDefault(1), args.ElementAtOrDefault(2)),
+    "recover-verify" => RecoverVerify(args.ElementAtOrDefault(1), args.ElementAtOrDefault(2), args.ElementAtOrDefault(3)),
     _ => Help(),
 };
+
+// Exports a passphrase-protected copy of the store's encryption key, so encrypted history
+// survives an OS reinstall / disk move (which makes the DPAPI-sealed live key unwrappable).
+// Reads the key directly from the ACL-locked store — must run elevated (admin).
+[SupportedOSPlatform("windows")]
+static int ExportRecoveryKey(string? passphrase, string? outFile)
+{
+    if (string.IsNullOrEmpty(passphrase) || string.IsNullOrWhiteSpace(outFile))
+    {
+        Console.WriteLine("usage: stepwind-cli export-recovery-key <passphrase> <output-file>");
+        return 1;
+    }
+
+    string storeRoot = StepWind.Core.Engine.StepWindSettings.DefaultStoreRoot;
+    string keyPath = Path.Combine(storeRoot, "store.key");
+    if (!File.Exists(keyPath))
+    {
+        Console.WriteLine("Encryption isn't enabled (no store key exists), so there's nothing to export. Enable encryption first.");
+        return 1;
+    }
+
+    try
+    {
+        byte[] key = KeyProtector.LoadOrCreate(storeRoot);
+        byte[] blob = KeyRecovery.Export(key, passphrase);
+        File.WriteAllBytes(outFile, blob);
+        Console.WriteLine($"Recovery key written to {outFile}. Keep it somewhere safe and OFF this machine — anyone with this file AND the passphrase can read your encrypted history.");
+        return 0;
+    }
+    catch (UnauthorizedAccessException)
+    {
+        Console.WriteLine("Access denied reading the store key. Run this command as administrator.");
+        return 1;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine("Export failed: " + ex.Message);
+        return 1;
+    }
+}
+
+// Verifies a recovery key file + passphrase actually unlock a store — the offline disaster-
+// recovery check. With a store root, proves a real version reconstructs with the recovered key.
+static int RecoverVerify(string? recoveryFile, string? passphrase, string? storeRootArg)
+{
+    if (string.IsNullOrWhiteSpace(recoveryFile) || string.IsNullOrEmpty(passphrase))
+    {
+        Console.WriteLine("usage: stepwind-cli recover-verify <recovery-file> <passphrase> [store-root]");
+        return 1;
+    }
+
+    if (!File.Exists(recoveryFile))
+    {
+        Console.WriteLine("Recovery file not found: " + recoveryFile);
+        return 1;
+    }
+
+    byte[] key;
+    try
+    {
+        key = KeyRecovery.Import(File.ReadAllBytes(recoveryFile), passphrase);
+    }
+    catch (System.Security.Cryptography.CryptographicException)
+    {
+        Console.WriteLine("Wrong passphrase, or the recovery file is corrupt.");
+        return 2;
+    }
+
+    string fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(key))[..12].ToLowerInvariant();
+    Console.WriteLine($"Recovery key is valid (fingerprint {fingerprint}).");
+
+    string storeRoot = string.IsNullOrWhiteSpace(storeRootArg)
+        ? StepWind.Core.Engine.StepWindSettings.DefaultStoreRoot : storeRootArg;
+    string index = Path.Combine(storeRoot, "versions.jsonl");
+    if (!File.Exists(index))
+    {
+        Console.WriteLine($"(No store at {storeRoot} to test against — the key itself is valid.)");
+        return 0;
+    }
+
+    try
+    {
+        // Read both plain and cipher blobs (a store may be mid-migration) using the recovered key.
+        var codec = new MigratingBlobCodec(new GzipBlobCodec(), () => new AesGcmBlobCodec(key), encryptNew: false);
+        var store = new VersionStore(new BlobStore(storeRoot, codec), new VersionLog(index));
+        FileVersion? sample = store.Log.All.FirstOrDefault();
+        if (sample is null)
+        {
+            Console.WriteLine("Store has no versions to test, but the recovery key is valid.");
+            return 0;
+        }
+
+        using var ms = new MemoryStream();
+        store.WriteContent(sample, ms); // re-hashes every chunk; throws if the key can't decrypt
+        Console.WriteLine($"Verified: '{sample.RelativePath}' ({ms.Length:N0} bytes) reconstructs with this key. Your store is recoverable.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine("The key imported but the store did not decrypt: " + ex.Message);
+        return 2;
+    }
+}
 
 // Deletes stored history on the running service: purge "*" | unprotected | <prefix>.
 static int Purge(string? selector)
@@ -101,8 +206,18 @@ static int Help()
 {
     Console.WriteLine("""
         StepWind CLI (admin required)
-          stepwind-cli journal <C:> [n]   print recent reconstructed file operations
-          stepwind-cli e2e                real-hardware end-to-end validation
+          stepwind-cli journal <C:> [n]              print recent reconstructed file operations
+          stepwind-cli e2e                           real-hardware end-to-end validation
+          stepwind-cli probe                         resolve-directory self-test
+          stepwind-cli settings                      print the running service's settings
+          stepwind-cli recent                        print recently-changed protected files
+          stepwind-cli set-encryption on|off         toggle store encryption on the service
+          stepwind-cli purge "*"|unprotected|<prefix>  delete stored history (destructive)
+          stepwind-cli export-recovery-key <passphrase> <out-file>
+                                                     export a passphrase-protected recovery key
+                                                     (survives OS reinstall / disk move)
+          stepwind-cli recover-verify <recovery-file> <passphrase> [store-root]
+                                                     check a recovery key unlocks the store
         """);
     return 0;
 }
