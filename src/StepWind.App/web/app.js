@@ -635,6 +635,7 @@ function renderHistoryPane(animate = false) {
           <span class="v-when">${fmtWhen(v.CapturedUtc)}</span>
           <span class="v-size">${fmtSize(v.Size)}</span>
           <span class="v-reason">${esc(v.Reason)}</span>
+          ${v.GitRef ? `<span class="v-git" title="Git branch/commit when saved">${esc(v.GitRef)}</span>` : ""}
           <span class="v-actions"><button class="btn v-restore" data-v="${esc(v.VersionId)}">Restore</button></span>
         </div>`).join("")
       : `<div class="empty" style="padding:24px"><div>No saved versions for this file yet.</div></div>`}

@@ -89,6 +89,7 @@ public sealed class VersionStore
                 Size = size,
                 Chunks = chunkIds,
                 Reason = reason,
+                GitRef = GitInfo.Describe(sourcePath),
             });
         }
     }

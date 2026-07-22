@@ -508,6 +508,11 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
   font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 99px;
   background: var(--hover-2); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.4px;
 }
+.v-git {
+  font-family: var(--mono); font-size: 10.5px; color: var(--text-3);
+  padding: 2px 7px; border-radius: 6px; border: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px;
+}
 .v-actions { margin-left: auto; display: flex; gap: 6px; }
 
 .diff-box {

@@ -855,6 +855,7 @@ public sealed class StepWindHost : IDisposable
                 Size = v.Size,
                 Reason = v.Reason,
                 VersionId = $"{v.RelativePath}|{v.CapturedUtc.Ticks}",
+                GitRef = v.GitRef,
             });
         }
 

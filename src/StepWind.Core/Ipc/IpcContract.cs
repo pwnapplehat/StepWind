@@ -99,6 +99,9 @@ public sealed record VersionEntry
 
     /// <summary>Opaque id the GUI passes back to RestoreVersion.</summary>
     public required string VersionId { get; init; }
+
+    /// <summary>Git branch/commit when captured (e.g. "main @ 3a1b2c1"), if the file was in a repo.</summary>
+    public string? GitRef { get; init; }
 }
 
 /// <summary>A protected file with saved history, for the GUI's recent-files quick list.</summary>

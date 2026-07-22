@@ -24,4 +24,11 @@ public sealed record FileVersion
 
     /// <summary>Why this version was captured (save/create/pre-delete/pre-overwrite…).</summary>
     public string Reason { get; init; } = "change";
+
+    /// <summary>
+    /// Git context when captured, e.g. "main @ 3a1b2c1" — set only for files inside a git repo,
+    /// so a developer can tell versions apart by branch/commit. Null otherwise. Purely
+    /// informational; never used to key or restore a version.
+    /// </summary>
+    public string? GitRef { get; init; }
 }
