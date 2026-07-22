@@ -20,9 +20,29 @@ public sealed class StepWindGateway
 {
     private readonly PipeClient _pipe = new();
 
+    /// <summary>
+    /// The ONLY IPC commands the MCP surface may issue — read-only + additive, matching the "agents
+    /// get the time machine, not the shredder" policy. Enforced here as defense-in-depth so a future
+    /// tool bug (or a tool wired to the wrong command) can never reach Purge/SetSettings/Repair over
+    /// the pipe, regardless of what a tool method passes.
+    /// </summary>
+    private static readonly HashSet<IpcCommand> Allowed =
+    [
+        IpcCommand.Ping, IpcCommand.GetStatus, IpcCommand.GetTimeline, IpcCommand.GetHistory,
+        IpcCommand.GetRecentFiles, IpcCommand.BrowseVersions, IpcCommand.GetVersionContent,
+        IpcCommand.DiffVersions, IpcCommand.CaptureNow, IpcCommand.RestoreVersion,
+        IpcCommand.ReverseOperation, IpcCommand.ReverseBatch,
+    ];
+
     public async Task<string> CallAsync(
         IpcCommand command, string? arg1 = null, string? arg2 = null, int limit = 200, CancellationToken ct = default)
     {
+        if (!Allowed.Contains(command))
+        {
+            // Never silently pass a disallowed command to the service — fail loudly in-process.
+            throw new McpException($"StepWind MCP is not permitted to call '{command}' (read + additive only).");
+        }
+
         IpcResponse resp = await _pipe.SendAsync(
             new IpcRequest { Command = command, Arg1 = arg1, Arg2 = arg2, Limit = limit }, ct: ct);
         if (!resp.Ok)

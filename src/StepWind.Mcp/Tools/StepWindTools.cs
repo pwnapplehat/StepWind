@@ -69,6 +69,20 @@ public static class StepWindTools
         CancellationToken cancellationToken = default)
         => await gateway.CallAsync(IpcCommand.BrowseVersions, arg1: path, arg2: query, ct: cancellationToken);
 
+    [McpServerTool(Name = "stepwind_recent_files", ReadOnly = true, Destructive = false),
+     Description(
+        "Lists the protected files changed most recently (relative path, last-captured time, and " +
+        "version count), newest first. A fast way to see what you've been working on / what has " +
+        "saved history to diff or restore, without walking the tree with stepwind_browse.")]
+    public static async Task<string> RecentFiles(
+        StepWindGateway gateway,
+        [Description("Max files to return, most recently changed first.")] int limit = 50,
+        CancellationToken cancellationToken = default)
+    {
+        string json = await gateway.CallAsync(IpcCommand.GetRecentFiles, limit: limit, ct: cancellationToken);
+        return json == "[]" ? "No protected files have saved history yet." : json;
+    }
+
     [McpServerTool(Name = "stepwind_get_file_history", ReadOnly = true, Destructive = false),
      Description(
         "Lists every saved version of one file, newest first — timestamp, size in bytes, and " +
@@ -186,6 +200,33 @@ public static class StepWindTools
         string json = await gateway.CallAsync(IpcCommand.ReverseOperation, arg1: operationId, ct: cancellationToken);
         using JsonDocument doc = JsonDocument.Parse(json);
         return doc.RootElement.TryGetProperty("Message", out JsonElement msg) ? msg.GetString() ?? "Reversed." : "Reversed.";
+    }
+
+    [McpServerTool(Name = "stepwind_undo_operations", ReadOnly = false, Destructive = false),
+     Description(
+        "Reverses MANY move/rename operations at once — e.g. to roll back a bulk move you (the " +
+        "agent) just made across a directory: call stepwind_list_timeline, collect the OperationId " +
+        "of each reversible entry you want to undo, and pass them all here. Each is attempted " +
+        "independently and reported per-item; anything whose original path is now occupied is " +
+        "skipped (never overwritten), never silently stopping the rest. Deletes aren't undone this " +
+        "way — use stepwind_restore_version.")]
+    public static async Task<string> UndoOperations(
+        StepWindGateway gateway,
+        [Description("OperationIds from stepwind_list_timeline entries with Reversible=true.")] string[] operationIds,
+        CancellationToken cancellationToken)
+    {
+        if (operationIds is null || operationIds.Length == 0)
+        {
+            return "No operationIds given — nothing to undo.";
+        }
+
+        string json = await gateway.CallAsync(
+            IpcCommand.ReverseBatch, arg1: JsonSerializer.Serialize(operationIds), ct: cancellationToken);
+        using JsonDocument doc = JsonDocument.Parse(json);
+        JsonElement root = doc.RootElement;
+        int total = root.GetProperty("Total").GetInt32();
+        int ok = root.GetProperty("Succeeded").GetInt32();
+        return $"Reversed {ok} of {total} operation(s).\n{json}";
     }
 
     private static T Deserialize<T>(string json)

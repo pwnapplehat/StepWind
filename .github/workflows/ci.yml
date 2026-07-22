@@ -37,6 +37,10 @@ jobs:
         run: ./build/publish.ps1 -Runtime win-x64
         shell: pwsh
 
+      - name: MCP stdio smoke test
+        run: ./build/mcp-smoke.ps1 -Exe dist/win-x64/StepWind.Mcp.exe
+        shell: pwsh
+
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
         shell: pwsh
