@@ -249,6 +249,26 @@ public class HostIpcTests : IDisposable
         Assert.Equal("recover me after delete", File.ReadAllText(restoredPath));
     }
 
+    [Fact]
+    public void ReverseBatch_reports_per_item_and_never_throws_on_unknown_ops()
+    {
+        // Batch undo must attempt every item and report each — a partial failure can't silently
+        // stop the rest. With no flight recorder (no admin here), every handle is unknown, which
+        // exercises exactly the "reported, not thrown" contract.
+        string payload = JsonSerializer.Serialize(new[] { "tok-a", "tok-b", "tok-c" });
+        IpcResponse r = _host.Handle(new IpcRequest { Command = IpcCommand.ReverseBatch, Arg1 = payload });
+        Assert.True(r.Ok, r.Error);
+
+        using JsonDocument doc = JsonDocument.Parse(r.Json!);
+        Assert.Equal(3, doc.RootElement.GetProperty("Total").GetInt32());
+        Assert.Equal(0, doc.RootElement.GetProperty("Succeeded").GetInt32());
+        Assert.Equal(3, doc.RootElement.GetProperty("Failed").GetInt32());
+        Assert.Equal(3, doc.RootElement.GetProperty("Results").GetArrayLength());
+
+        // An empty batch is a clean error, not a crash.
+        Assert.False(_host.Handle(new IpcRequest { Command = IpcCommand.ReverseBatch, Arg1 = "[]" }).Ok);
+    }
+
     private async Task WaitForCapture(string rel)
     {
         for (int i = 0; i < 40; i++)

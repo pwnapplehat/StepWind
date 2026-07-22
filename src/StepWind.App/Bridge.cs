@@ -84,6 +84,7 @@ public sealed class Bridge(MainWindow window)
 
         // ── service pipe: actions ──
         "undo" => await PipeAsync(IpcCommand.ReverseOperation, Require(p, "operationId")),
+        "undoBatch" => await PipeAsync(IpcCommand.ReverseBatch, Require(p, "operationIds")),
         "restore" => await PipeAsync(IpcCommand.RestoreVersion, Require(p, "versionId")),
         "runRetention" => await PipeAsync(IpcCommand.RunRetention),
         "purge" => await PipeAsync(IpcCommand.PurgeHistory, Require(p, "selector")),
@@ -99,6 +100,9 @@ public sealed class Bridge(MainWindow window)
 
         // ── host: updates ──
         "installUpdate" => InstallUpdate(Require(p, "path")),
+
+        // ── host: diagnostics ──
+        "exportDiagnostics" => await ExportDiagnosticsAsync(),
 
         // ── host: shell helpers ──
         "pickFolder" => PickFolder(p?["title"]?.GetValue<string>()),
@@ -293,6 +297,90 @@ public sealed class Bridge(MainWindow window)
         // UseShellExecute lets Windows apply the installer's admin manifest → UAC prompt.
         System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(full) { UseShellExecute = true });
         return null;
+    }
+
+    /// <summary>
+    /// Gathers a support bundle — settings, status, store-integrity summary, detected AI tools,
+    /// versions, OS/runtime, and the installer/update log tail — and saves it to a file the user
+    /// picks. Deliberately contains NO file contents and no version data: only configuration and
+    /// health, so it's safe to attach to a bug report. Returns the written path (or null if cancelled).
+    /// </summary>
+    private async Task<JsonNode?> ExportDiagnosticsAsync()
+    {
+        JsonNode? status = await SafePipe(IpcCommand.GetStatus);
+        JsonNode? settings = await SafePipe(IpcCommand.GetSettings);
+        JsonNode? storeCheck = await SafePipe(IpcCommand.VerifyStore);
+
+        var agents = new JsonArray();
+        foreach (McpClientTarget t in McpInstaller.DetectAll())
+        {
+            agents.Add(new JsonObject { ["name"] = t.DisplayName, ["detected"] = t.Installed, ["connected"] = t.Configured });
+        }
+
+        var bundle = new JsonObject
+        {
+            ["generatedUtc"] = DateTime.UtcNow.ToString("u"),
+            ["appVersion"] = typeof(Bridge).Assembly.GetName().Version?.ToString() ?? "unknown",
+            ["os"] = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+            ["runtime"] = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+            ["architecture"] = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString(),
+            ["status"] = status,
+            ["settings"] = settings,
+            ["storeCheck"] = storeCheck,
+            ["aiAgents"] = agents,
+            ["updateLog"] = TailFile(Path.Combine(StepWindSettings.DefaultRoot, "logs", "update-install.log"), 100),
+            ["note"] = "Contains configuration and health only — no file names, paths inside protected folders, or file contents.",
+        };
+
+        string json = bundle.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+
+        string? savePath = null;
+        window.RunOnUi(() =>
+        {
+            var dialog = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Save StepWind diagnostics",
+                FileName = $"stepwind-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss}.json",
+                Filter = "JSON diagnostics (*.json)|*.json",
+            };
+            if (dialog.ShowDialog() == true)
+            {
+                savePath = dialog.FileName;
+            }
+        });
+
+        if (savePath is null)
+        {
+            return null; // cancelled
+        }
+
+        await File.WriteAllTextAsync(savePath, json);
+        return JsonValue.Create(savePath);
+    }
+
+    /// <summary>Pipe call that returns null instead of throwing, so one down subsystem can't abort the whole bundle.</summary>
+    private async Task<JsonNode?> SafePipe(IpcCommand cmd)
+    {
+        try { return await PipeAsync(cmd); }
+        catch (Exception ex) { return new JsonObject { ["error"] = ex.Message }; }
+    }
+
+    private static JsonNode? TailFile(string path, int maxLines)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            string[] lines = File.ReadAllLines(path);
+            return string.Join('\n', lines.TakeLast(maxLines));
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private JsonNode? PickFolder(string? title)

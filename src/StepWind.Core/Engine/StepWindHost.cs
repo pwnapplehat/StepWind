@@ -253,6 +253,7 @@ public sealed class StepWindHost : IDisposable
                 IpcCommand.GetHistory => GetHistory(request.Arg1 ?? "", caller),
                 IpcCommand.GetRecentFiles => Ok(BuildRecentFiles(request.Limit, caller)),
                 IpcCommand.ReverseOperation => ReverseOperation(request.Arg1 ?? "", caller),
+                IpcCommand.ReverseBatch => ReverseBatch(request.Arg1 ?? "", caller),
                 IpcCommand.RestoreVersion => RestoreVersion(request.Arg1 ?? "", request.Arg2, caller),
                 IpcCommand.RunRetention => RequirePrivilege(caller) ?? RunRetentionCommand(),
                 IpcCommand.GetSettings => Ok(BuildSettings()),
@@ -314,7 +315,8 @@ public sealed class StepWindHost : IDisposable
 
     private object BuildStatus(CallerContext caller)
     {
-        EngineStatus s = _watch.Status;
+        WatchEngine watch = _watch;
+        EngineStatus s = watch.Status;
         List<string> folders = AccessibleFolders(caller);
         StorageState storage = _storageState;
         Updates.PendingUpdate? update = _pendingUpdate;
@@ -325,6 +327,8 @@ public sealed class StepWindHost : IDisposable
             s.PendingChanges,
             s.VersionsCaptured,
             s.LastCaptureUtc,
+            s.LockedFiles,
+            LockedSample = watch.LockedSample(5),
             TotalVersions = _store.Log.All.Count,
             StoreBytes = _store.Blobs.TotalBytes + SafeFileLength(System.IO.Path.Combine(_settings.StoreRoot, "versions.jsonl")),
             ReEncoding = _reEncoding,
@@ -1187,6 +1191,60 @@ public sealed class StepWindHost : IDisposable
         ReverseResult r = OperationReverser.Reverse(lookup.Op, _fs);
         return r.Success ? IpcResponse.Success(JsonSerializer.Serialize(new { r.Message, r.RestoredPath }))
                          : IpcResponse.Fail(r.Message);
+    }
+
+    /// <summary>
+    /// Reverses many operations in one call — undoing a bulk move/rename (e.g. Explorer moved 200
+    /// files) without 200 clicks. Each item is attempted independently and reported per-item, so a
+    /// partial failure never silently stops the rest: the caller learns exactly what was and wasn't
+    /// undone. Same authorization as single undo — a caller can only reverse operations it can see.
+    /// </summary>
+    private IpcResponse ReverseBatch(string json, CallerContext caller)
+    {
+        string[]? tokens;
+        try
+        {
+            tokens = JsonSerializer.Deserialize<string[]>(json);
+        }
+        catch
+        {
+            return IpcResponse.Fail("bad batch payload");
+        }
+
+        if (tokens is null || tokens.Length == 0)
+        {
+            return IpcResponse.Fail("no operations to undo");
+        }
+
+        var access = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<object>(tokens.Length);
+        int succeeded = 0;
+
+        foreach (string token in tokens)
+        {
+            FileOperation? op = _flightRecorder?.Find(token);
+            if (op is null)
+            {
+                results.Add(new { Token = token, Success = false, Message = "operation not found (it may have aged out of the timeline)" });
+                continue;
+            }
+
+            if (!CallerCanSeeOperation(caller, op, _watch, access))
+            {
+                results.Add(new { Token = token, Success = false, Message = "You don't have access to reverse this operation." });
+                continue;
+            }
+
+            ReverseResult r = OperationReverser.Reverse(op, _fs);
+            if (r.Success)
+            {
+                succeeded++;
+            }
+
+            results.Add(new { Token = token, Success = r.Success, Message = r.Message });
+        }
+
+        return Ok(new { Total = tokens.Length, Succeeded = succeeded, Failed = tokens.Length - succeeded, Results = results });
     }
 
     private readonly record struct FileRecorderLookup(FileOperation? Op);

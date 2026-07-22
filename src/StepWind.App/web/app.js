@@ -314,6 +314,22 @@ function renderCoverageRow() {
     </div>`;
 }
 
+// Honest per-file status: files a program is holding open right now (so they're captured when
+// released, not force-snapshotted). Shown only when some file has been locked past the transient
+// mid-save window — never nags about a normal quick save.
+function renderLockedRow() {
+  const n = (lastStatus && lastStatus.LockedFiles) || 0;
+  if (!n) return "";
+  const sample = (lastStatus.LockedSample || []).map((s) => esc(s)).join(", ");
+  return `
+    <div class="set-row">
+      <div style="min-width:0">
+        <div class="set-title">${n} file${n === 1 ? "" : "s"} open in another program</div>
+        <div class="set-sub">Held open right now (e.g. an open Outlook data file)${sample ? ` — ${sample}` : ""}. StepWind saves ${n === 1 ? "it" : "them"} automatically once the program releases ${n === 1 ? "it" : "them"}; it never forces a snapshot of a locked file.</div>
+      </div>
+    </div>`;
+}
+
 function renderTimeline(animate = false) {
   const host = $("#view-timeline");
   let ops = tlFilter === "All" ? tlOps : tlOps.filter((o) => o.Kind === tlFilter);
@@ -328,6 +344,8 @@ function renderTimeline(animate = false) {
         <div class="page-sub">Everything that just happened to your files, on every drive — moves and renames undo in one click.</div>
       </div>
       <div class="page-actions">
+        ${ops.filter((o) => o.Reversible).length >= 2
+          ? `<button class="btn primary" id="tl-undo-all">Undo all ${ops.filter((o) => o.Reversible).length} moves</button>` : ""}
         <button class="btn" id="tl-refresh">
           <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v5h-5"/></svg>
           Refresh
@@ -395,6 +413,28 @@ function renderTimeline(animate = false) {
     call("patch", { patch: { TimelineProtectedOnly: protectedOnly } }).catch(() => { });
   }));
   $("#tl-refresh", host).onclick = () => loadTimeline(false, true);
+  const undoAll = $("#tl-undo-all", host);
+  if (undoAll) undoAll.onclick = async () => {
+    // Reverse every reversible operation currently shown (newest first) — the one-click undo of a
+    // bulk move/rename. Scope follows the filters, so "Moves" + "Undo all" undoes just the moves.
+    const reversible = ops.filter((o) => o.Reversible);
+    const ok = await dlg.confirm(`Undo ${reversible.length} operations?`,
+      `StepWind will move all ${reversible.length} shown items back where they were. Anything whose original spot is now occupied is skipped (never overwritten), and you'll get a report.`,
+      "Undo all", false);
+    if (!ok) return;
+    undoAll.disabled = true;
+    try {
+      const res = await call("undoBatch", { operationIds: JSON.stringify(reversible.map((o) => o.OperationId)) });
+      await loadTimeline(false);
+      const failed = res.Failed || 0;
+      if (failed === 0) toast("ok", "Undone", `Moved all ${res.Succeeded} items back.`);
+      else dlg.notice("Undo finished with some skipped",
+        `${res.Succeeded} of ${res.Total} moved back. ${failed} couldn't be (their original location is occupied or they moved again).`);
+    } catch (err) {
+      toast("err", "Couldn't undo", err.message);
+      undoAll.disabled = false;
+    }
+  };
   $$(".tl-undo", host).forEach((b) => (b.onclick = async () => {
     b.disabled = true;
     try {
@@ -1074,6 +1114,7 @@ async function loadSettings() {
             <div class="set-value">${lastStatus ? `${(lastStatus.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(lastStatus.StoreBytes)}` : "—"}</div>
           </div>
           ${renderCoverageRow()}
+          ${renderLockedRow()}
         </div>
       </div>
 
@@ -1134,6 +1175,7 @@ async function loadSettings() {
           <div><div class="set-title">StepWind <span id="ab-ver" style="color:var(--text-3);font-weight:400"></span></div>
           <div class="set-sub">Free · open source · 100% local · no cloud · no account · no telemetry</div></div>
           <div style="margin-left:auto;display:flex;gap:8px;flex-shrink:0">
+            <button class="btn" id="ab-diag">Export diagnostics</button>
             <button class="btn" id="ab-site">stepwind.app</button>
             <button class="btn" id="ab-repo">GitHub</button>
           </div>
@@ -1250,6 +1292,14 @@ async function loadSettings() {
 
   $("#ab-site", host).onclick = () => call("openUrl", { url: "https://stepwind.app" });
   $("#ab-repo", host).onclick = () => call("openUrl", { url: "https://github.com/pwnapplehat/StepWind" });
+  $("#ab-diag", host).onclick = async () => {
+    try {
+      const path = await call("exportDiagnostics", {});
+      if (path) dlg.notice("Diagnostics saved", `Saved to:\n${path}\n\nIt contains configuration and health only — no file names or contents. Safe to attach to a bug report.`);
+    } catch (err) {
+      dlg.notice("Couldn't export diagnostics", err.message);
+    }
+  };
 }
 
 function wireSwitch(id, onToggle) {

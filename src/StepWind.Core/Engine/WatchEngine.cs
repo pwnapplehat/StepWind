@@ -5,7 +5,7 @@ using StepWind.Core.Storage;
 namespace StepWind.Core.Engine;
 
 /// <summary>Snapshot of engine activity for the UI/logs.</summary>
-public sealed record EngineStatus(int WatchedRoots, int PendingChanges, long VersionsCaptured, DateTime? LastCaptureUtc);
+public sealed record EngineStatus(int WatchedRoots, int PendingChanges, long VersionsCaptured, DateTime? LastCaptureUtc, int LockedFiles);
 
 /// <summary>
 /// The folder time-machine orchestrator: watches configured roots with FileSystemWatcher,
@@ -37,7 +37,12 @@ public sealed class WatchEngine : IDisposable
     private readonly System.Threading.Timer _createTimer;
     // path → when it was first seen created. Bounds retry and de-dupes repeat Created events.
     private readonly ConcurrentDictionary<string, DateTime> _pendingCreates = new(StringComparer.OrdinalIgnoreCase);
+    // path → when it was first seen exclusively locked (so we can report chronically-locked files).
+    private readonly ConcurrentDictionary<string, DateTime> _lockedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Action<string>? _log;
+
+    /// <summary>A file must be locked at least this long before it's reported as "waiting" (not just a transient mid-save lock).</summary>
+    private static readonly TimeSpan LockedReportAfter = TimeSpan.FromSeconds(20);
 
     private long _versionsCaptured; // Interlocked — touched by the drain timer, reconcile, and error-recovery threads
     private DateTime? _lastCaptureUtc;
@@ -88,7 +93,31 @@ public sealed class WatchEngine : IDisposable
         _createTimer = new System.Threading.Timer(_ => DrainCreates(), null, CreateBaselineInterval, CreateBaselineInterval);
     }
 
-    public EngineStatus Status => new(_roots.Count, _debouncer.PendingCount, _versionsCaptured, _lastCaptureUtc);
+    public EngineStatus Status => new(_roots.Count, _debouncer.PendingCount, _versionsCaptured, _lastCaptureUtc, LockedFileCount());
+
+    /// <summary>How many files are currently held open by another program (locked past the transient window).</summary>
+    private int LockedFileCount()
+    {
+        DateTime cutoff = DateTime.UtcNow - LockedReportAfter;
+        int n = 0;
+        foreach (KeyValuePair<string, DateTime> kv in _lockedPaths)
+        {
+            if (kv.Value <= cutoff)
+            {
+                n++;
+            }
+        }
+
+        return n;
+    }
+
+    /// <summary>Up to <paramref name="max"/> names of files currently locked past the transient window (for the UI).</summary>
+    public IReadOnlyList<string> LockedSample(int max)
+    {
+        DateTime cutoff = DateTime.UtcNow - LockedReportAfter;
+        return [.. _lockedPaths.Where(kv => kv.Value <= cutoff).OrderBy(kv => kv.Value)
+            .Select(kv => Path.GetFileName(kv.Key)).Take(max)];
+    }
 
     private void StartWatching(string root)
     {
@@ -182,6 +211,7 @@ public sealed class WatchEngine : IDisposable
     {
         _debouncer.Forget(e.FullPath);
         _pendingCreates.TryRemove(e.FullPath, out _);
+        _lockedPaths.TryRemove(e.FullPath, out _); // gone — no longer waiting on a lock
     }
 
     private void OnPath(string fullPath)
@@ -285,10 +315,12 @@ public sealed class WatchEngine : IDisposable
             _store.Capture(fullPath, rel, reason);
             Interlocked.Increment(ref _versionsCaptured);
             _lastCaptureUtc = DateTime.UtcNow;
+            _lockedPaths.TryRemove(fullPath, out _); // it was capturable — no longer locked
             return true;
         }
         catch (IOException)
         {
+            _lockedPaths.TryAdd(fullPath, DateTime.UtcNow); // remember since when it's been locked
             // The file is mid-write or exclusively locked right now. We open with full share
             // (read/write/delete), so the common case — apps that keep a shared read handle
             // (Office, most editors) — already succeeds; this path is the minority that holds
