@@ -42,9 +42,9 @@ public partial class MainWindow : Window
         // --minimized to tray). Found by the tray-open repro harness.
         RegisterGlobalHotkey();
 
-        // First-run seeding must happen even when the app starts --minimized and is never
-        // opened this session — it's pipe-only work, independent of the web layer.
-        _ = _bridge.SeedDefaultFoldersOnFirstRunAsync();
+        // First run is now an explicit onboarding flow in the web layer (welcome + choose which
+        // folders get version history) rather than silently seeding folders — the user consents.
+        // The whole-machine flight recorder (undo of moves/renames/deletes) is on regardless.
 
         // Watch protection state in the background so the tray can warn about a stopped service,
         // a disk-full pause, or a ready update even while minimized — and keep the tooltip live.

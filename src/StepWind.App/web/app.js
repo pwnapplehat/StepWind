@@ -134,14 +134,17 @@ function toast(kind, title, body, ms = 4200) {
 
 /* ═══════════════ Dialogs (promise-based) ═══════════════ */
 
+let dlgSeq = 0;
 function showDialog({ title, body, primary, secondary, cancel = "Cancel", danger = false, hideCancel = false }) {
   return new Promise((resolve) => {
     const host = $("#dialog-host");
+    const titleId = "dlg-title-" + (++dlgSeq);
+    const returnFocus = document.activeElement; // restore focus to whatever opened the dialog
     const overlay = document.createElement("div");
     overlay.className = "dlg-overlay";
     overlay.innerHTML = `
-      <div class="dlg" role="dialog" aria-modal="true">
-        <div class="dlg-title">${esc(title)}</div>
+      <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
+        <div class="dlg-title" id="${titleId}">${esc(title)}</div>
         <div class="dlg-body">${esc(body)}</div>
         <div class="dlg-actions">
           ${hideCancel ? "" : `<button class="btn" data-r="cancel">${esc(cancel)}</button>`}
@@ -149,15 +152,29 @@ function showDialog({ title, body, primary, secondary, cancel = "Cancel", danger
           <button class="btn ${danger ? "danger" : "primary"}" data-r="primary">${esc(primary)}</button>
         </div>
       </div>`;
-    const done = (r) => { overlay.remove(); resolve(r); };
+    const done = (r) => {
+      overlay.remove();
+      try { returnFocus && returnFocus.focus && returnFocus.focus(); } catch { /* gone */ }
+      resolve(r);
+    };
     overlay.onclick = (e) => { if (e.target === overlay && !hideCancel) done("cancel"); };
     $$("[data-r]", overlay).forEach((b) => (b.onclick = () => done(b.dataset.r)));
     host.appendChild(overlay);
     const primaryBtn = $('[data-r="primary"]', overlay);
     primaryBtn.focus();
     overlay.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !hideCancel) done("cancel");
-      if (e.key === "Enter") done("primary");
+      if (e.key === "Escape" && !hideCancel) { done("cancel"); return; }
+      if (e.key === "Enter") { done("primary"); return; }
+      // Focus trap: keep Tab inside the dialog so keyboard/AT users can't wander into the
+      // (inert) background while a modal is open.
+      if (e.key === "Tab") {
+        const f = $$("button, [href], input, [tabindex]:not([tabindex='-1'])", overlay)
+          .filter((x) => !x.disabled && x.offsetParent !== null);
+        if (f.length === 0) return;
+        const first = f[0], last = f[f.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
     });
   });
 }
@@ -195,7 +212,11 @@ function movePill(target) {
 function navigate(view) {
   if (!VIEW_TITLES[view]) return;
   currentView = view;
-  $$(".nav-item").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  $$(".nav-item").forEach((b) => {
+    const on = b.dataset.view === view;
+    b.classList.toggle("active", on);
+    if (on) { b.setAttribute("aria-current", "page"); } else { b.removeAttribute("aria-current"); }
+  });
   $$(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + view));
   $("#crumbs").innerHTML =
     `<span class="crumb-app">StepWind</span><span class="crumb-sep">/</span>` +
@@ -284,11 +305,12 @@ function opInProtectedFolder(op) {
 //  • delete with a saved version → Restore (recover from the version store);
 //  • delete with no saved version → an honest "not saved" hint, never a dead button.
 function timelineAction(op) {
+  const name = esc(op.Name || "this item");
   if (op.Reversible) {
-    return `<button class="btn primary tl-undo" data-op="${esc(op.OperationId)}">Undo</button>`;
+    return `<button class="btn primary tl-undo" data-op="${esc(op.OperationId)}" aria-label="Undo ${op.Kind.toLowerCase()} of ${name}">Undo</button>`;
   }
   if (op.Kind === "Delete" && op.RecoverableVersionId) {
-    return `<button class="btn primary tl-restore" data-v="${esc(op.RecoverableVersionId)}">Restore</button>`;
+    return `<button class="btn primary tl-restore" data-v="${esc(op.RecoverableVersionId)}" aria-label="Restore deleted ${name}">Restore</button>`;
   }
   if (op.Kind === "Delete") {
     return `<span class="tl-norecover" title="This file wasn't in a protected folder, so no version was saved to restore.">Not saved</span>`;
@@ -1437,11 +1459,74 @@ const VIEW_LOADERS = {
 (async function boot() {
   applyTheme(); // re-assert data-theme + notify the host chrome now that the bridge is ready
   await pollStatus();
+  let firstRunDone = true;
   try {
     const s = await call("settings");
     watchedFolders = s?.WatchedFolders || [];
     tlProtectedOnly = !!s?.TimelineProtectedOnly;
+    firstRunDone = s?.FirstRunCompleted !== false;
   } catch { }
   setInterval(liveTick, 3000);
   navigate("timeline");
+
+  // First run: explicit onboarding instead of silently grabbing folders. Only when the service
+  // is reachable, nothing is protected yet, and no human has made a folder choice before.
+  if (!firstRunDone && lastStatus && (lastStatus.WatchedRoots ?? 0) === 0) {
+    showOnboarding();
+  }
 })();
+
+/* ═══════════════ First-run onboarding ═══════════════ */
+
+async function showOnboarding() {
+  let defaults = [];
+  try { defaults = (await call("defaultFolders")) || []; } catch { }
+
+  const host = $("#dialog-host");
+  const overlay = document.createElement("div");
+  overlay.className = "dlg-overlay";
+  const folderRows = defaults.map((f, i) =>
+    `<label class="ob-folder"><input type="checkbox" class="ob-check" data-p="${esc(f)}" ${i < 3 ? "checked" : ""}/> <span>${esc(f)}</span></label>`).join("");
+
+  overlay.innerHTML = `
+    <div class="dlg ob" role="dialog" aria-modal="true" aria-labelledby="ob-title" style="max-width:560px">
+      <div class="dlg-title" id="ob-title">Welcome to StepWind</div>
+      <div class="dlg-body">
+        <p style="margin:0 0 10px">StepWind is an <strong>undo button for your whole PC</strong>. It's already watching every drive for accidental <em>moves, renames and deletes</em> — you can reverse those from the Timeline with one click, no setup needed.</p>
+        <p style="margin:0 0 10px">To also keep <strong>version history</strong> (so you can roll a file back to an earlier save), pick the folders that matter. You can change these any time in <strong>Protected folders</strong>.</p>
+        ${folderRows ? `<div class="ob-folders">${folderRows}</div>` : `<p style="color:var(--text-3)">No default folders were found — you can add your own from Protected folders.</p>`}
+        <p style="margin:10px 0 0;color:var(--text-3);font-size:12px">History is stored locally on this PC (nothing leaves your machine) and is space-managed automatically. You can move it to another drive later from Settings.</p>
+      </div>
+      <div class="dlg-actions">
+        <button class="btn" data-r="skip">I'll pick later</button>
+        <button class="btn primary" data-r="start">Start protecting</button>
+      </div>
+    </div>`;
+
+  const close = () => { overlay.remove(); };
+  overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") { close(); markFirstRunDone(); } });
+  $$("[data-r]", overlay).forEach((b) => (b.onclick = async () => {
+    if (b.dataset.r === "start") {
+      const chosen = $$(".ob-check", overlay).filter((c) => c.checked).map((c) => c.dataset.p);
+      close();
+      if (chosen.length) {
+        await patchAndReload({ WatchedFolders: chosen }, true);
+        toast("ok", "Protection on", `Now keeping version history for ${chosen.length} folder${chosen.length === 1 ? "" : "s"}.`);
+        navigate("folders");
+      } else {
+        await markFirstRunDone();
+      }
+    } else {
+      close();
+      await markFirstRunDone();
+      navigate("folders");
+    }
+  }));
+  host.appendChild(overlay);
+  $('[data-r="start"]', overlay)?.focus();
+}
+
+// Records that the user has made a first-run choice (even "later"), so onboarding doesn't reappear.
+async function markFirstRunDone() {
+  try { await call("patch", { patch: { WatchedFolders: watchedFolders } }); } catch { }
+}

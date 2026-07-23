@@ -103,6 +103,9 @@ public sealed class Bridge(MainWindow window)
         // ── host: updates ──
         "installUpdate" => InstallUpdate(Require(p, "path")),
 
+        // ── host: onboarding ──
+        "defaultFolders" => DefaultFolders(),
+
         // ── host: diagnostics ──
         "exportDiagnostics" => await ExportDiagnosticsAsync(),
 
@@ -165,35 +168,20 @@ public sealed class Bridge(MainWindow window)
     }
 
     /// <summary>
-    /// First-run seeding (host-side so it happens regardless of which view opens first).
-    /// The SYSTEM service can't see the user's real folders; the GUI supplies them exactly
-    /// once. FirstRunCompleted flips permanently on any human folder decision, so removed
-    /// folders never come back on their own.
+    /// The user's real work folders (Documents/Desktop/Pictures that exist), computed in the GUI
+    /// process (the SYSTEM service can't see the logged-in user's profile). Offered as pre-checked
+    /// suggestions in first-run onboarding — the user explicitly confirms, instead of StepWind
+    /// silently grabbing folders. Nothing is protected until they choose.
     /// </summary>
-    public async Task SeedDefaultFoldersOnFirstRunAsync()
+    private static JsonNode DefaultFolders()
     {
-        try
+        var arr = new JsonArray();
+        foreach (string f in StepWindSettings.DefaultUserFolders())
         {
-            JsonNode? status = await PipeAsync(IpcCommand.GetStatus);
-            JsonNode? settings = await PipeAsync(IpcCommand.GetSettings);
-            int roots = status?["WatchedRoots"]?.GetValue<int>() ?? -1;
-            bool firstRunDone = settings?["FirstRunCompleted"]?.GetValue<bool>() ?? true;
-            if (roots != 0 || firstRunDone)
-            {
-                return;
-            }
+            arr.Add(JsonValue.Create(f));
+        }
 
-            List<string> defaults = StepWindSettings.DefaultUserFolders();
-            if (defaults.Count > 0)
-            {
-                await PipeAsync(IpcCommand.SetSettings,
-                    JsonSerializer.Serialize(new { WatchedFolders = defaults }));
-            }
-        }
-        catch
-        {
-            // Service down — the UI already shows "not protecting"; seeding retries next launch.
-        }
+        return arr;
     }
 
     // ─────────────────────────────── AI agents ───────────────────────────────

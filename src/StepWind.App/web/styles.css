@@ -443,6 +443,15 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
 .cov.on .cov-dot { background: var(--ok); }
 .cov.off { color: var(--text-3); }
 .cov-fs { color: var(--text-3); font-size: 10.5px; }
+/* first-run onboarding folder picker */
+.ob-folders { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }
+.ob-folder {
+  display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 12.5px;
+}
+.ob-folder:hover { border-color: var(--accent); }
+.ob-folder input { width: 15px; height: 15px; accent-color: var(--accent); flex-shrink: 0; }
+.ob-folder span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-norecover {
   flex-shrink: 0; font-size: 11px; color: var(--text-3);
   font-style: italic; white-space: nowrap;

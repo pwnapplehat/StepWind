@@ -36,7 +36,7 @@
       </div>
     </div>
 
-    <nav id="nav">
+    <nav id="nav" aria-label="Primary">
       <div class="nav-label">Protection</div>
       <button class="nav-item active" data-view="timeline">
         <svg viewBox="0 0 24 24"><path d="M12 8v4l2.6 2.6M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.7L21 8M21 3v5h-5"/></svg>
@@ -71,9 +71,9 @@
       <kbd>Ctrl K</kbd>
     </button>
 
-    <div id="status-card">
+    <div id="status-card" role="status" aria-live="polite">
       <div class="status-row">
-        <span id="status-dot" class="dot bad"></span>
+        <span id="status-dot" class="dot bad" aria-hidden="true"></span>
         <span id="status-title">Connecting…</span>
       </div>
       <div id="status-sub">Looking for the StepWind service</div>
@@ -85,9 +85,9 @@
     <header id="topbar" class="drag">
       <div id="crumbs" class="no-drag"></div>
       <div id="win-controls" class="no-drag">
-        <button id="win-min" title="Minimize"><svg viewBox="0 0 12 12"><path d="M2 6h8"/></svg></button>
-        <button id="win-max" title="Maximize"><svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1"/></svg></button>
-        <button id="win-close" title="Close"><svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
+        <button id="win-min" title="Minimize" aria-label="Minimize window"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6h8"/></svg></button>
+        <button id="win-max" title="Maximize" aria-label="Maximize window"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2.5" width="7" height="7" rx="1"/></svg></button>
+        <button id="win-close" title="Close" aria-label="Close window"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
       </div>
     </header>
 
@@ -110,7 +110,7 @@
 </div>
 
 <div id="dialog-host"></div>
-<div id="toasts"></div>
+<div id="toasts" role="status" aria-live="assertive" aria-label="Notifications"></div>
 
 <script src="app.js"></script>
 </body>
