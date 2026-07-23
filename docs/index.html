@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>StepWind — an undo button for your whole PC</title>
+<meta name="description" content="StepWind is a free, open-source, 100% local Windows app: real-time protection against accidental moves, renames, deletes, and bad saves, with continuous version history for the folders you choose."/>
+<meta name="color-scheme" content="dark light"/>
+<meta property="og:title" content="StepWind — an undo button for your whole PC"/>
+<meta property="og:description" content="Real-time protection against accidental moves, renames, deletes, and bad saves. Free, open source, 100% local, no telemetry."/>
+<meta property="og:type" content="website"/>
+<link rel="icon" href="icon.png"/>
+<link rel="stylesheet" href="site.css"/>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top"><img src="icon.png" width="30" height="30" alt=""/> StepWind</a>
+    <nav class="links">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/pwnapplehat/StepWind">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <h1>An undo button for your <span class="grad">whole PC</span>.</h1>
+      <p class="lede">Real-time protection against accidental moves, renames, deletes, and bad saves — for everyone, not just people who use git. Free, open source, <strong>100% local</strong>: no cloud, no account, no telemetry.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/pwnapplehat/StepWind/releases/latest">Download for Windows</a>
+        <a class="btn" href="https://github.com/pwnapplehat/StepWind">View source</a>
+      </div>
+      <p class="fineprint">Windows 10 (1809+) or 11 · x64 or ARM64 · MIT licensed</p>
+      <img class="shot" src="screenshots/app.png" alt="StepWind timeline — a live, day-grouped feed of file operations with one-click undo"/>
+    </div>
+  </section>
+
+  <section id="features" class="section">
+    <div class="wrap">
+      <h2>What it does</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>A flight recorder for your machine</h3>
+          <p>StepWind reads the NTFS change journal on every drive and shows a plain-English timeline of what happened — "Explorer moved <em>Thesis</em> to Archive". A move, rename, or delete is reversed with <strong>one click</strong>.</p>
+        </div>
+        <div class="card">
+          <h3>A time machine for your folders</h3>
+          <p>Chosen folders get continuous version history — content-defined, deduplicated, compressed. Roll a file back to any earlier save, even after it was overwritten <em>and</em> deleted. A lightly-edited 2 GB file doesn't cost 2 GB per save.</p>
+        </div>
+        <div class="card">
+          <h3>A safety net for AI agents</h3>
+          <p>An MCP server lets tools like Cursor and Claude checkpoint a file before a risky edit, diff exactly what changed, and restore — <strong>read + additive only</strong>, so an agent can never delete history or change settings.</p>
+        </div>
+        <div class="card">
+          <h3>Safe by construction</h3>
+          <p>Restores never overwrite your current work. Reversal refuses an occupied path. History is space-managed and pauses (loudly) if the disk runs low. On a shared PC, one account can't read or purge another's history.</p>
+        </div>
+        <div class="card">
+          <h3>Encrypted at rest, recoverable</h3>
+          <p>Optional AES-256-GCM (file contents and, if you want, the index too), with an exportable passphrase recovery key so encrypted history survives an OS reinstall.</p>
+        </div>
+        <div class="card">
+          <h3>Yours, entirely</h3>
+          <p>Everything stays on your machine. No cloud, no account, no telemetry, no ads. Open source under MIT — read every line.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how" class="section alt">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <ol class="steps">
+        <li><strong>Install &amp; forget.</strong> A background service watches your drives; the tray app is where you look when something goes wrong.</li>
+        <li><strong>Something goes wrong.</strong> You move a folder by accident, or overwrite a good draft. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> from anywhere.</li>
+        <li><strong>Undo it.</strong> The timeline shows the operation — click <em>Undo</em> to move it back, or <em>Restore</em> to bring back a deleted file's saved version.</li>
+      </ol>
+      <p class="shots-row">
+        <img src="screenshots/files.png" alt="File versions — a folder browser with version history"/>
+        <img src="screenshots/folders.png" alt="Protected folders"/>
+      </p>
+    </div>
+  </section>
+
+  <section id="install" class="section">
+    <div class="wrap">
+      <h2>Install</h2>
+      <p>Download <strong>StepWind-x.y.z-setup.exe</strong> (or the <code>-arm64</code> build on ARM) from the <a href="https://github.com/pwnapplehat/StepWind/releases/latest">latest release</a> and run it.</p>
+      <div class="note">
+        <strong>"Windows protected your PC"?</strong> Expected for a new, unsigned installer — not a malware detection. Click <em>More info → Run anyway</em>. Every release ships <code>SHA256SUMS.txt</code>; verify your download in PowerShell:
+        <pre>(Get-FileHash .\StepWind-x.y.z-setup.exe -Algorithm SHA256).Hash</pre>
+        and compare it to the matching line. Free code signing (which removes this prompt) is on the way via the SignPath Foundation open-source program.
+      </div>
+      <p>Updates are verified before they install (SHA-256 + code signature); an unsigned build is never run silently — it's staged and offered as a one-click install you approve. See the <a href="https://github.com/pwnapplehat/StepWind/blob/main/SECURITY.md">security model</a> for the full trust story.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap foot-in">
+    <span>StepWind — MIT licensed · © 2026 StepWind Contributors</span>
+    <span class="foot-links">
+      <a href="https://github.com/pwnapplehat/StepWind">GitHub</a>
+      <a href="https://github.com/pwnapplehat/StepWind/blob/main/SECURITY.md">Security</a>
+      <a href="https://github.com/pwnapplehat/StepWind/blob/main/CHANGELOG.md">Changelog</a>
+    </span>
+  </div>
+</footer>
+</body>
+</html>
