@@ -865,7 +865,7 @@ async function loadFolders() {
       <svg viewBox="0 0 24 24"><path d="M12 22s8-3.4 8-10V5.5L12 2 4 5.5V12c0 6.6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
       <div>A version is captured a couple of seconds after a file settles. Identical re-saves are skipped, build junk and caches are excluded automatically, and restores never overwrite your current file — the recovered version lands next to it. Removing a folder only stops new captures: already-saved versions stay restorable until retention ages them out.</div>
     </div>
-    <div class="card-grid enter" style="overflow:visible;flex:none;scrollbar-gutter:auto">
+    <div class="card-grid" style="overflow:visible;flex:none;scrollbar-gutter:auto">
       ${folders.map((f, i) => `
         <div class="card g-card" data-i="${i}">
           <div class="g-head">
@@ -1062,7 +1062,7 @@ async function loadAgents() {
         Connecting merges StepWind's MCP server into that tool's config — a backup is taken first and every change is reversible. The agent gets read + restore powers only: it can never delete history or change settings.</div>
     </div>
     <div class="scroll-y" style="flex:1;min-height:0">
-      <div class="card-grid enter" style="overflow:visible;scrollbar-gutter:auto">
+      <div class="card-grid" style="overflow:visible;scrollbar-gutter:auto">
         ${agents.map((a, i) => `
           <div class="card g-card ${a.detected ? "" : "dim"}" data-i="${i}">
             <div class="g-head">

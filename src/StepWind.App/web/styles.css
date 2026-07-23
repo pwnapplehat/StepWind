@@ -284,10 +284,12 @@ body {
   position: absolute; inset: 0; padding: 6px 26px 22px;
   display: none; flex-direction: column; min-height: 0;
 }
-.view.active { display: flex; animation: view-in 0.28s var(--ease); }
+/* Tab switch: a pure, quick fade. No translate — the whole view sliding while its content is
+   also swapped in async (pipe fetch → innerHTML) read as double motion / "bouncing". */
+.view.active { display: flex; animation: view-in 0.16s var(--ease); }
 @keyframes view-in {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: none; }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* ═══════════════ Shared primitives ═══════════════ */
@@ -397,16 +399,14 @@ body {
    (navigate, filter, drill in, open history), never on the 3s background refresh. Without
    this the whole list re-faded every few seconds on a busy machine (and screenshots caught
    it mid-fade). Rows are settled by default; .enter opts them into the staggered reveal. */
-.enter > .tl-row, .enter > .f-row, .enter > .v-row, .enter > .g-card {
+.enter > .tl-row, .enter > .f-row, .enter > .v-row {
   opacity: 0;
 }
 .enter > .tl-row { animation: row-in 0.34s var(--ease) forwards; }
 .enter > .f-row  { animation: row-in 0.3s var(--ease) forwards; }
 .enter > .v-row  { animation: row-in 0.3s var(--ease) forwards; }
-/* Cards: a plain quick fade — no translate/scale, no stagger. Grid cards moving as they appear
-   is what read as "bouncing"; a calm 0.16s fade feels instant. */
-.enter > .g-card { animation: card-fade 0.16s var(--ease) forwards; }
-@keyframes card-fade { from { opacity: 0; } to { opacity: 1; } }
+/* Cards get NO entrance animation of their own — the 0.16s view fade covers the whole grid as
+   one calm unit. Any per-card motion (slide, scale, stagger) read as jitter on tab switches. */
 /* Settled-state mode (screenshots / reduced motion): kill every animation+transition AND
    force the entrance elements to their final opacity (they start at 0 waiting for the
    keyframe, which no-anim would otherwise cancel — leaving them invisible). */
