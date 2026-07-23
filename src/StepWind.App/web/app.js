@@ -47,6 +47,61 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/* ═══════════════ i18n ═══════════════
+   Dates/numbers already format to the OS locale (Intl via toLocale*). This adds a string catalog
+   so text is translatable: t("key", {vars}) looks up the active locale, falling back to English.
+   Shipping a new language = adding one entry to STRINGS (a pure data change). English is complete. */
+const STRINGS = {
+  en: {
+    "brand.sub": "undo for your PC",
+    "nav.protection": "Protection",
+    "nav.integrations": "Integrations",
+    "nav.app": "App",
+    "view.timeline": "Timeline",
+    "view.files": "File versions",
+    "view.folders": "Protected folders",
+    "view.agents": "AI agents",
+    "view.settings": "Settings",
+    "palette.hint": "Search & commands",
+    "palette.placeholder": "Type a command or search…",
+    "status.connecting": "Connecting…",
+    "status.looking": "Looking for the StepWind service",
+    "status.active": "Protection active",
+    "status.paused": "Capturing paused",
+    "status.notProtecting": "Not protecting",
+    "status.notReachable": "The StepWind service is not reachable.",
+    "status.noFolders": "No folders protected yet",
+    "day.today": "Today",
+    "day.yesterday": "Yesterday",
+  },
+};
+
+function resolveLocale() {
+  try {
+    const stored = localStorage.getItem("stepwind.locale");
+    const want = stored || (navigator.language || "en");
+    const base = want.toLowerCase().split("-")[0];
+    if (STRINGS[want]) return want;
+    if (STRINGS[base]) return base;
+  } catch { /* fall through */ }
+  return "en";
+}
+const LOCALE = resolveLocale();
+
+function t(key, vars) {
+  let s = (STRINGS[LOCALE] && STRINGS[LOCALE][key]) ?? STRINGS.en[key] ?? key;
+  if (vars) for (const k in vars) s = s.split("{" + k + "}").join(String(vars[k]));
+  return s;
+}
+
+// Translates static markup: [data-i18n] text, [data-i18n-ph] placeholders, [data-i18n-title] titles.
+function applyStaticI18n(root = document) {
+  root.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  root.querySelectorAll("[data-i18n-ph]").forEach((el) => { el.placeholder = t(el.dataset.i18nPh); });
+  root.querySelectorAll("[data-i18n-title]").forEach((el) => { el.title = t(el.dataset.i18nTitle); });
+  document.documentElement.lang = LOCALE;
+}
+
 function fmtSize(b) {
   if (b == null) return "";
   if (b < 1024) return b + " B";
@@ -64,8 +119,8 @@ function dayLabel(iso) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const that = new Date(d); that.setHours(0, 0, 0, 0);
   const diff = Math.round((today - that) / 86400000);
-  if (diff === 0) return "Today";
-  if (diff === 1) return "Yesterday";
+  if (diff === 0) return t("day.today");
+  if (diff === 1) return t("day.yesterday");
   return d.toLocaleDateString([], today.getFullYear() === d.getFullYear()
     ? { month: "long", day: "numeric" } : { month: "long", day: "numeric", year: "numeric" });
 }
@@ -197,8 +252,8 @@ $("#win-close").onclick = () => call("win", { action: "close" });
 /* ═══════════════ Router ═══════════════ */
 
 const VIEW_TITLES = {
-  timeline: "Timeline", files: "File versions", folders: "Protected folders",
-  agents: "AI agents", settings: "Settings",
+  timeline: t("view.timeline"), files: t("view.files"), folders: t("view.folders"),
+  agents: t("view.agents"), settings: t("view.settings"),
 };
 let currentView = "timeline";
 
@@ -240,21 +295,21 @@ async function pollStatus() {
       // Loud, honest state: protection is on but NOT capturing (disk full / quota) — the exact
       // File-History failure StepWind exists to avoid, surfaced instead of hidden.
       $("#status-dot").className = "dot warn";
-      $("#status-title").textContent = "Capturing paused";
+      $("#status-title").textContent = t("status.paused");
       $("#status-sub").textContent = s.PauseReason || "Low disk space — free up space to resume.";
     } else {
       $("#status-dot").className = "dot ok";
-      $("#status-title").textContent = "Protection active";
+      $("#status-title").textContent = t("status.active");
       $("#status-sub").textContent = s.WatchedRoots === 0
-        ? "No folders protected yet"
+        ? t("status.noFolders")
         : `${s.WatchedRoots} folder${s.WatchedRoots === 1 ? "" : "s"} · ` +
           `${(s.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(s.StoreBytes)}`;
     }
   } catch {
     lastStatus = null;
     $("#status-dot").className = "dot bad";
-    $("#status-title").textContent = "Not protecting";
-    $("#status-sub").textContent = "The StepWind service is not reachable.";
+    $("#status-title").textContent = t("status.notProtecting");
+    $("#status-sub").textContent = t("status.notReachable");
   }
 }
 
@@ -1457,6 +1512,7 @@ const VIEW_LOADERS = {
 };
 
 (async function boot() {
+  applyStaticI18n(); // translate the static chrome (nav, labels, placeholders) to the active locale
   applyTheme(); // re-assert data-theme + notify the host chrome now that the bridge is ready
   await pollStatus();
   let firstRunDone = true;
