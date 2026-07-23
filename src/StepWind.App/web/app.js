@@ -330,7 +330,7 @@ function renderCoverageRow() {
     <div class="set-row">
       <div style="min-width:0">
         <div class="set-title">Timeline coverage</div>
-        <div class="set-sub">The timeline records fixed NTFS drives. Removable, network, and ReFS/exFAT drives aren't recorded — protect specific folders on them for version history instead.</div>
+        <div class="set-sub">The whole-machine timeline records drives with a change journal (NTFS, and ReFS/Dev Drive where Windows provides one). Removable, network, and exFAT drives aren't on the timeline — but you can still protect any folder on them for full version history.</div>
         <div class="cov-list">${chips}</div>
       </div>
     </div>`;

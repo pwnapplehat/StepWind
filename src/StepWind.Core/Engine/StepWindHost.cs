@@ -191,7 +191,7 @@ public sealed class StepWindHost : IDisposable
 
         try
         {
-            _flightRecorder = new FlightRecorder(_settings.StoreRoot, FixedNtfsVolumes(), log: _log,
+            _flightRecorder = new FlightRecorder(_settings.StoreRoot, FixedJournalCandidates(), log: _log,
                 ignorePrefixes: new[] { StepWindSettings.DefaultRoot, _settings.StoreRoot });
             return null;
         }
@@ -393,7 +393,8 @@ public sealed class StepWindHost : IDisposable
     /// </summary>
     private object[] BuildVolumeCoverage()
     {
-        bool recorderOn = _flightRecorder is not null;
+        FlightRecorder? recorder = _flightRecorder;
+        var active = new HashSet<string>(recorder?.ActiveVolumes ?? [], StringComparer.OrdinalIgnoreCase);
         var list = new List<object>();
         foreach (DriveInfo d in DriveInfo.GetDrives())
         {
@@ -404,14 +405,17 @@ public sealed class StepWindHost : IDisposable
                     continue;
                 }
 
-                bool fixedNtfs = d.DriveType == DriveType.Fixed && d.DriveFormat == "NTFS";
-                bool monitored = fixedNtfs && recorderOn;
-                string note = fixedNtfs
-                    ? (recorderOn ? "Covered by the timeline" : "Flight recorder is off")
-                    : $"{d.DriveType} {d.DriveFormat} drives aren't recorded";
+                string name = d.Name.TrimEnd('\\');
+                bool monitored = active.Contains(name); // the honest truth: is the journal actually being read
+                bool couldJournal = d.DriveType == DriveType.Fixed && d.DriveFormat is "NTFS" or "ReFS";
+                string note = monitored
+                    ? "Covered by the timeline"
+                    : couldJournal
+                        ? (recorder is null ? "Flight recorder is off" : "No change journal on this drive — protect a folder here for version history")
+                        : $"{d.DriveType} {d.DriveFormat}: not on the timeline — protect a folder here for version history";
                 list.Add(new
                 {
-                    Name = d.Name.TrimEnd('\\'),
+                    Name = name,
                     FileSystem = d.DriveFormat,
                     Type = d.DriveType.ToString(),
                     Monitored = monitored,
@@ -1729,13 +1733,19 @@ public sealed class StepWindHost : IDisposable
 
     private static IpcResponse Ok(object payload) => IpcResponse.Success(JsonSerializer.Serialize(payload));
 
-    private static IEnumerable<string> FixedNtfsVolumes()
+    /// <summary>
+    /// Fixed volumes whose filesystem MIGHT expose a USN change journal — NTFS always, and ReFS
+    /// (Dev Drive) which supports one on recent Windows. The flight recorder tries each and skips
+    /// any that don't actually have a journal (errors are per-volume, so a ReFS volume without one
+    /// is harmless), and only reports the ones it's truly reading via ActiveVolumes.
+    /// </summary>
+    private static IEnumerable<string> FixedJournalCandidates()
     {
         foreach (DriveInfo d in DriveInfo.GetDrives())
         {
-            bool ntfs = false;
-            try { ntfs = d.DriveType == DriveType.Fixed && d.IsReady && d.DriveFormat == "NTFS"; } catch { }
-            if (ntfs)
+            bool candidate = false;
+            try { candidate = d.DriveType == DriveType.Fixed && d.IsReady && d.DriveFormat is "NTFS" or "ReFS"; } catch { }
+            if (candidate)
             {
                 yield return d.Name.TrimEnd('\\');
             }

@@ -25,6 +25,10 @@ public sealed class FlightRecorder : IDisposable
     private readonly Action<string>? _log;
     private readonly FileAttributionTracker _attribution = new();
     private readonly ConcurrentDictionary<string, Cursor> _cursors = new(StringComparer.OrdinalIgnoreCase);
+    // Which candidate volumes are ACTUALLY being read right now (USN journal reachable). A
+    // candidate can fail — a ReFS/Dev-Drive volume may not expose a USN journal — and per-volume
+    // errors are swallowed, so this is the honest source of truth for coverage reporting.
+    private readonly ConcurrentDictionary<string, bool> _active = new(StringComparer.OrdinalIgnoreCase);
     private readonly LinkedList<FileOperation> _recent = new();
     private readonly object _recentLock = new();
     private readonly System.Threading.Timer _timer;
@@ -59,6 +63,9 @@ public sealed class FlightRecorder : IDisposable
 
         _timer = new System.Threading.Timer(_ => Poll(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
     }
+
+    /// <summary>Volumes the recorder is actually reading (USN journal reachable) — for honest coverage reporting.</summary>
+    public IReadOnlyList<string> ActiveVolumes => [.. _active.Where(kv => kv.Value).Select(kv => kv.Key)];
 
     /// <summary>Most recent operations, newest first, up to <paramref name="limit"/>.</summary>
     public IReadOnlyList<FileOperation> Recent(int limit)
@@ -107,9 +114,11 @@ public sealed class FlightRecorder : IDisposable
             using var reader = new UsnJournalReader(volume);
             (ulong id, long next) = reader.Query();
             _cursors[volume] = new Cursor(id, next);
+            _active[volume] = true;
         }
         catch (Exception ex)
         {
+            _active[volume] = false; // e.g. a ReFS volume with no USN journal — skip it honestly
             _log?.Invoke($"prime {volume}: {ex.Message}");
         }
     }
@@ -121,9 +130,11 @@ public sealed class FlightRecorder : IDisposable
             try
             {
                 PollVolume(volume);
+                _active[volume] = true;
             }
             catch (Exception ex)
             {
+                _active[volume] = false;
                 _log?.Invoke($"poll {volume}: {ex.Message}");
             }
         }
