@@ -23,11 +23,21 @@ SignPath Foundation's conditions and StepWind's status:
 | Free downloads | ✅ GitHub Releases |
 | No malware / no bundled proprietary components | ✅ 100% open source, no telemetry, no bundleware |
 | Documented functionality | ✅ `README.md` + `SECURITY.md` |
+| Already released in signable form | ✅ v1.0.0 installers on GitHub Releases |
 | Actively maintained | ✅ (keep commits/releases current) |
+
+Their terms also require, once approved (both are one-line doc edits, prepared in
+[§4](#4-after-the-first-signed-release)):
+- the exact attribution *"Free code signing provided by SignPath.io, certificate by SignPath
+  Foundation"* on the project's home/download page, and
+- a **code signing policy** stated on the project page (what gets signed, by whom, from where —
+  ours: only CI-built artifacts from tagged releases of this public repo are submitted for
+  signing; no locally-built binaries are ever signed).
 
 ## 2. Application — copy/paste answers
 
-Apply at **https://signpath.org/apply** (or https://signpath.org/ → "Apply"). Use these:
+Apply at **https://signpath.org/apply.html** (also reachable via signpath.io → Open Source →
+Apply). Review typically takes **1–2 weeks**. Use these answers:
 
 - **Project name:** StepWind
 - **Project description:** An open-source Windows app that gives you an undo button for your whole
@@ -38,9 +48,9 @@ Apply at **https://signpath.org/apply** (or https://signpath.org/ → "Apply"). 
 - **Programming language / build:** C# / .NET 10, built with `dotnet publish` + Inno Setup in
   GitHub Actions (`.github/workflows/ci.yml`).
 - **Download / release URL:** https://github.com/pwnapplehat/StepWind/releases
-- **Artifacts to sign:** the Windows installer `StepWind-<version>-setup.exe` and the app
-  executables it packages (`StepWind.exe`, `StepWind.Service.exe`, `StepWind.Mcp.exe`,
-  `StepWind.Cli.exe`).
+- **Artifacts to sign:** the Windows installers `StepWind-<version>-setup.exe` (x64) and
+  `StepWind-<version>-arm64-setup.exe` (ARM64), plus the app executables they package
+  (`StepWind.exe`, `StepWind.Service.exe`, `StepWind.Mcp.exe`, `StepWind.Cli.exe`).
 - **CI system:** GitHub Actions (public repo; SignPath can verify the build provenance).
 - **Maintainer:** iOS_hAT (repo owner `pwnapplehat`).
 
