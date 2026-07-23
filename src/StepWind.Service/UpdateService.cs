@@ -44,9 +44,9 @@ public sealed class UpdateService
     private readonly Action<string> _log;
     private readonly HttpClient _http;
     private readonly string _stagingDir;
-    private readonly Action<PendingUpdate>? _onStaged;
+    private readonly Action<PendingUpdate?>? _onStaged; // null = retract a previously staged offer
 
-    public UpdateService(Action<string> log, string? stagingDir = null, Action<PendingUpdate>? onStaged = null)
+    public UpdateService(Action<string> log, string? stagingDir = null, Action<PendingUpdate?>? onStaged = null)
     {
         _log = log;
         _stagingDir = stagingDir ?? Path.Combine(Path.GetTempPath(), "StepWindUpdate");
@@ -83,6 +83,11 @@ public sealed class UpdateService
 
             if (!UpdatePlanner.TryParseVersion(release.Tag, out Version latest) || latest <= CurrentVersion)
             {
+                // Nothing newer is published. If an earlier check staged a setup for a release
+                // that has since been PULLED (deleted or re-cut), retract the offer and delete the
+                // staged file — otherwise the GUI would keep advertising a ghost update forever.
+                ClearStagedSetups();
+                _onStaged?.Invoke(null);
                 return UpdateOutcome.UpToDate;
             }
 
@@ -164,6 +169,22 @@ public sealed class UpdateService
             foreach (string f in Directory.EnumerateFiles(_stagingDir, "StepWind-*-setup.exe"))
             {
                 if (!string.Equals(f, keepPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    TryDelete(f);
+                }
+            }
+        }
+        catch { /* best effort */ }
+    }
+
+    /// <summary>Removes every staged setup — used when the release that was staged no longer exists.</summary>
+    private void ClearStagedSetups()
+    {
+        try
+        {
+            if (Directory.Exists(_stagingDir))
+            {
+                foreach (string f in Directory.EnumerateFiles(_stagingDir, "StepWind-*-setup.exe"))
                 {
                     TryDelete(f);
                 }

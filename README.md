@@ -14,7 +14,7 @@ everyone, not just people who use git.
 
 Free · open source · 100% local · no cloud · no account · no telemetry
 
-**[Website](https://pwnapplehat.github.io/StepWind/)** · [Releases](https://github.com/pwnapplehat/StepWind/releases/latest) · [Security model](SECURITY.md)
+[Releases](https://github.com/pwnapplehat/StepWind/releases/latest) · [Security model](SECURITY.md)
 
 <img src="docs/screenshots/app.png" width="820" alt="StepWind timeline — a live, day-grouped feed of file operations with one-click undo"/>
 
