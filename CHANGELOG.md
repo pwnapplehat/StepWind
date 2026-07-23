@@ -39,6 +39,12 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   encrypt the index of names/paths/dates, so an offline drive reveals no metadata. Turning it on or
   off never orphans history (the key always reads existing lines; a retention pass converges the
   file).
+- **Polish & reach.** An accessibility pass (screen-reader live regions, dialog focus-trap, keyboard
+  focus, descriptive labels); an explicit first-run onboarding flow (choose what gets version
+  history) replacing silent folder seeding; internationalization scaffolding (locale-aware dates/
+  numbers + a translatable string catalog); native **ARM64** builds; **ReFS/Dev Drive** timeline
+  coverage where Windows exposes a journal (folder history already works on any filesystem); and a
+  landing/docs site.
 
 - **Delete-undo is real, end to end.** A newly created file is now baselined within a moment of
   creation (a fast create-capture path), so a file created and deleted inside the debounce quiet
@@ -284,7 +290,7 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   update can't leave the machine unprotected. Silent auto-install stays disabled until releases
   are code-signed (the safe default). Opt-out available.
 
-Verified: 265 unit tests; real-hardware elevated E2E through the production classes
+Verified: 269 unit tests; real-hardware elevated E2E through the production classes
 (reconstruct + reverse + version round-trip, including the marker-time delete path measured
 against the live NTFS journal); live service demo with encryption on (key sealed, zero
 plaintext leak, restore byte-exact); UI-automation pass driving every view of the redesigned
