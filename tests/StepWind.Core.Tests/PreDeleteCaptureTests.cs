@@ -25,24 +25,42 @@ public class PreDeleteCaptureTests : IDisposable
             new VersionLog(Path.Combine(_root, "store", "versions.jsonl")));
     }
 
+    // Polls until a version exists for the relative path (deterministic — no fixed sleeps that
+    // can lose the race under load). Fails the test if nothing is captured within the timeout,
+    // which would be a real regression, not flakiness. The default cap stays UNDER the 2s debounce
+    // so a version appearing means the fast create-baseline path produced it, not the settle pass.
+    private async Task<bool> WaitForBaselineAsync(string rel, int timeoutMs = 1800)
+    {
+        for (int waited = 0; waited < timeoutMs; waited += 50)
+        {
+            if (_store.Log.History(rel).Count > 0)
+            {
+                return true;
+            }
+
+            await Task.Delay(50);
+        }
+
+        return _store.Log.History(rel).Count > 0;
+    }
+
     [Fact]
     public async Task File_created_then_deleted_before_the_quiet_window_still_has_a_restorable_version()
     {
-        // Quiet period 2s (the default). The create-baseline drain runs every ~250ms, so a file
-        // that lives for ~1s — well under the debounce window — is captured before it's deleted.
+        // Quiet period 2s. The create-baseline drain runs every ~250ms, so the file is captured
+        // well before the 2s settle — we wait for that baseline (deterministically), then delete.
         using var engine = new WatchEngine(_store, new PathExclusions(), [_watch],
             quietPeriod: TimeSpan.FromSeconds(2));
 
         string file = Path.Combine(_watch, "flash.txt");
         File.WriteAllText(file, "here and gone");
 
-        // Give the fast create path time to grab a baseline, then delete before the 2s settle.
-        await Task.Delay(900);
-        File.Delete(file);
+        Assert.True(await WaitForBaselineAsync("watch/flash.txt"), "create-baseline did not capture before the settle window");
+        File.Delete(file); // now it's gone — but a version already exists
 
-        // A version exists and reconstructs byte-exact even though the file is now gone.
         IReadOnlyList<FileVersion> history = _store.Log.History("watch/flash.txt");
         Assert.NotEmpty(history);
+        Assert.Equal("create", history[0].Reason); // proves it came from the fast path, not the debounce
 
         using var ms = new MemoryStream();
         _store.WriteContent(history[^1], ms);
@@ -57,7 +75,7 @@ public class PreDeleteCaptureTests : IDisposable
 
         string file = Path.Combine(_watch, "notes.txt");
         File.WriteAllText(file, "original content");
-        await Task.Delay(900); // baseline captured
+        Assert.True(await WaitForBaselineAsync("watch/notes.txt"), "baseline did not capture");
 
         // Edit and immediately delete, faster than the 2s debounce could capture the edit.
         File.WriteAllText(file, "edited but about to vanish");
