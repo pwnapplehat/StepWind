@@ -3,7 +3,7 @@
 ; Expects published binaries in dist\win-x64 (run build\publish.ps1 first).
 
 #define AppName "StepWind"
-#define AppVersion "1.0.0"
+#define AppVersion "1.0.1"
 #define AppPublisher "StepWind Contributors"
 #define AppURL "https://stepwind.app"
 #define RepoURL "https://github.com/pwnapplehat/StepWind"

@@ -2,6 +2,34 @@
 
 All notable changes to StepWind are documented here.
 
+## 1.0.1 — 2026-07-23
+
+Polish & reach: everyone can use it, everywhere it can run.
+
+- **Accessibility.** Screen readers now announce protection-state changes and notifications
+  (live regions); dialogs trap focus and return it to the opener; the active view is exposed via
+  `aria-current`; timeline Undo/Restore buttons carry descriptive labels ("Undo move of Thesis")
+  and are reachable/visible from the keyboard; switches toggle with Space/Enter.
+- **First-run onboarding.** A fresh install now asks — a welcome screen explains the always-on
+  flight recorder and lets you choose which folders get version history (with sensible pre-checked
+  suggestions), instead of silently protecting Documents/Desktop/Pictures. Nothing is captured
+  without your explicit choice.
+- **Native ARM64 builds.** Releases now ship `StepWind-x.y.z-arm64-setup.exe` alongside x64, and
+  the auto-updater picks the installer matching your CPU (with an x64 fallback).
+- **ReFS / Dev Drive timeline.** The flight recorder now also reads the change journal on ReFS
+  volumes where Windows provides one, and drive coverage reports what is *actually* being recorded
+  instead of guessing by filesystem. Folder version history already works on any filesystem
+  (removable, exFAT, network included) — the coverage panel now says so.
+- **Internationalization foundation.** Dates and numbers follow your Windows locale; UI text now
+  flows through a translatable string catalog (adding a language is a single data file). English
+  ships complete.
+- **Website.** A landing + docs page: https://pwnapplehat.github.io/StepWind/ — download, hash
+  verification, security model.
+- **Test hardening.** IPC wire-contract tests (append-only command ids — a mixed-version GUI/
+  service pair mid-update can never run the wrong command; every command proven routed);
+  filesystem-agnostic capture/restore pinned by test; the create-then-delete timing tests made
+  deterministic. 269 unit tests.
+
 ## 1.0.0 — 2026-07-20
 
 Initial release — an undo button for your whole PC (and a safety net for AI coding agents).
@@ -39,12 +67,6 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   encrypt the index of names/paths/dates, so an offline drive reveals no metadata. Turning it on or
   off never orphans history (the key always reads existing lines; a retention pass converges the
   file).
-- **Polish & reach.** An accessibility pass (screen-reader live regions, dialog focus-trap, keyboard
-  focus, descriptive labels); an explicit first-run onboarding flow (choose what gets version
-  history) replacing silent folder seeding; internationalization scaffolding (locale-aware dates/
-  numbers + a translatable string catalog); native **ARM64** builds; **ReFS/Dev Drive** timeline
-  coverage where Windows exposes a journal (folder history already works on any filesystem); and a
-  landing/docs site.
 
 - **Delete-undo is real, end to end.** A newly created file is now baselined within a moment of
   creation (a fast create-capture path), so a file created and deleted inside the debounce quiet
@@ -290,7 +312,7 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   update can't leave the machine unprotected. Silent auto-install stays disabled until releases
   are code-signed (the safe default). Opt-out available.
 
-Verified: 269 unit tests; real-hardware elevated E2E through the production classes
+Verified: 265 unit tests; real-hardware elevated E2E through the production classes
 (reconstruct + reverse + version round-trip, including the marker-time delete path measured
 against the live NTFS journal); live service demo with encryption on (key sealed, zero
 plaintext leak, restore byte-exact); UI-automation pass driving every view of the redesigned
