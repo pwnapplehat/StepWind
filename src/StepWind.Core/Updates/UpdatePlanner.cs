@@ -74,14 +74,20 @@ public static class UpdatePlanner
         return true;
     }
 
-    /// <summary>Pulls the tag_name and (setup, sums) asset download URLs out of a GitHub "latest release" JSON body.</summary>
-    public static ReleaseInfo ParseRelease(string json)
+    /// <summary>
+    /// Pulls the tag_name and (setup, sums) asset URLs out of a GitHub "latest release" JSON body,
+    /// choosing the setup that matches the running CPU architecture (<paramref name="arch"/>:
+    /// "x64" or "arm64"). A release can ship both an x64 installer ("…-setup.exe") and an ARM64 one
+    /// ("…-arm64-setup.exe"); an ARM machine prefers the arm64 asset, everything else the plain one.
+    /// </summary>
+    public static ReleaseInfo ParseRelease(string json, string arch = "x64")
     {
         using JsonDocument doc = JsonDocument.Parse(json);
         JsonElement root = doc.RootElement;
 
         string? tag = root.TryGetProperty("tag_name", out JsonElement t) ? t.GetString() : null;
-        string? setup = null, sums = null;
+        var setups = new List<(string Name, string Url)>();
+        string? sums = null;
 
         if (root.TryGetProperty("assets", out JsonElement assets) && assets.ValueKind == JsonValueKind.Array)
         {
@@ -96,7 +102,7 @@ public static class UpdatePlanner
 
                 if (name.EndsWith("-setup.exe", StringComparison.OrdinalIgnoreCase))
                 {
-                    setup = url;
+                    setups.Add((name, url));
                 }
                 else if (name.Equals("SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase))
                 {
@@ -105,7 +111,30 @@ public static class UpdatePlanner
             }
         }
 
-        return new ReleaseInfo(tag, setup, sums);
+        return new ReleaseInfo(tag, PickSetupForArch(setups, arch), sums);
+    }
+
+    private static string? PickSetupForArch(List<(string Name, string Url)> setups, string arch)
+    {
+        if (setups.Count == 0)
+        {
+            return null;
+        }
+
+        bool IsArm(string name) => name.Contains("arm64", StringComparison.OrdinalIgnoreCase);
+
+        if (string.Equals(arch, "arm64", StringComparison.OrdinalIgnoreCase))
+        {
+            var arm = setups.FirstOrDefault(s => IsArm(s.Name));
+            if (arm != default)
+            {
+                return arm.Url;
+            }
+        }
+
+        // x64/default (or arm64 with no arm asset): prefer the non-arm ("plain") installer.
+        var plain = setups.FirstOrDefault(s => !IsArm(s.Name));
+        return (plain != default ? plain : setups[0]).Url;
     }
 
     /// <summary>

@@ -54,6 +54,27 @@ public class UpdatePlannerTests
     }
 
     [Fact]
+    public void ParseRelease_picks_the_setup_matching_the_running_architecture()
+    {
+        const string json = """
+        {
+          "tag_name": "v1.2.0",
+          "assets": [
+            { "name": "StepWind-1.2.0-setup.exe", "browser_download_url": "https://example/x64.exe" },
+            { "name": "StepWind-1.2.0-arm64-setup.exe", "browser_download_url": "https://example/arm64.exe" },
+            { "name": "SHA256SUMS.txt", "browser_download_url": "https://example/sums.txt" }
+          ]
+        }
+        """;
+
+        Assert.Equal("https://example/x64.exe", UpdatePlanner.ParseRelease(json, "x64").SetupUrl);
+        Assert.Equal("https://example/arm64.exe", UpdatePlanner.ParseRelease(json, "arm64").SetupUrl);
+        // arm64 machine but only an x64 asset → fall back to the x64 installer rather than nothing.
+        const string x64Only = """{ "tag_name":"v1","assets":[{"name":"StepWind-1-setup.exe","browser_download_url":"https://example/x64.exe"}]}""";
+        Assert.Equal("https://example/x64.exe", UpdatePlanner.ParseRelease(x64Only, "arm64").SetupUrl);
+    }
+
+    [Fact]
     public void ParseRelease_reports_missing_assets_as_null()
     {
         const string json = """{ "tag_name": "v1.2.0", "assets": [] }""";

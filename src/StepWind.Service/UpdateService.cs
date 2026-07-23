@@ -77,7 +77,9 @@ public sealed class UpdateService
                 return UpdateOutcome.Error;
             }
 
-            ReleaseInfo release = UpdatePlanner.ParseRelease(await resp.Content.ReadAsStringAsync(ct));
+            string arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture
+                == System.Runtime.InteropServices.Architecture.Arm64 ? "arm64" : "x64";
+            ReleaseInfo release = UpdatePlanner.ParseRelease(await resp.Content.ReadAsStringAsync(ct), arch);
 
             if (!UpdatePlanner.TryParseVersion(release.Tag, out Version latest) || latest <= CurrentVersion)
             {

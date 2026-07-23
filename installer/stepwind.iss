@@ -7,7 +7,20 @@
 #define AppPublisher "StepWind Contributors"
 #define AppURL "https://stepwind.app"
 #define RepoURL "https://github.com/pwnapplehat/StepWind"
-#define DistDir "..\dist\win-x64"
+; Target architecture — pass -DArch=arm64 to build the ARM64 installer (defaults to x64).
+; The x64 installer keeps the plain name so the existing auto-updater finds it; arm64 gets an
+; -arm64 suffix, which the updater's arch-aware asset picker prefers on ARM machines.
+#ifndef Arch
+  #define Arch "x64"
+#endif
+#define DistDir "..\dist\win-" + Arch
+#if Arch == "arm64"
+  #define ArchAllowed "arm64"
+  #define SetupSuffix "-arm64-setup"
+#else
+  #define ArchAllowed "x64compatible"
+  #define SetupSuffix "-setup"
+#endif
 
 [Setup]
 AppId={{B8E2B7F4-3C6A-4E2D-9E1A-7F2C5D8A6B10}
@@ -25,13 +38,13 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
 OutputDir=Output
-OutputBaseFilename=StepWind-{#AppVersion}-setup
+OutputBaseFilename=StepWind-{#AppVersion}{#SetupSuffix}
 SetupIconFile=..\assets\icon.ico
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed={#ArchAllowed}
+ArchitecturesInstallIn64BitMode={#ArchAllowed}
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\StepWind.exe
 ; Let Restart Manager close + reopen the tray GUI around the file swap so its locked
