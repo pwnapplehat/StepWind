@@ -1059,11 +1059,18 @@ async function loadAgents() {
       <div>${found === 0
         ? "No supported AI tools were found on this PC. Install one (Cursor, Claude, VS Code…) or use the manual setup below."
         : `${found} AI tool${found === 1 ? "" : "s"} found on this PC · ${connected} connected.`}
-        Connecting merges StepWind's MCP server into that tool's config — a backup is taken first and every change is reversible. The agent gets read + restore powers only: it can never delete history or change settings.</div>
+        Connecting merges StepWind's MCP server into that tool's config — a backup is taken first and every change is reversible. Where the tool supports Agent Skills (Cursor, Claude Code), connecting also installs StepWind's skill, which teaches the AI to checkpoint before risky edits, diff after, and restore on regret. The agent gets read + restore powers only: it can never delete history or change settings.</div>
     </div>
     <div class="scroll-y" style="flex:1;min-height:0">
       <div class="card-grid" style="overflow:visible;scrollbar-gutter:auto">
-        ${agents.map((a, i) => `
+        ${agents.map((a, i) => {
+          const skillMissing = a.connected && !a.needsRepair && a.skillSupported && !a.skillInstalled;
+          const sub = a.connected
+            ? (a.needsRepair ? "Connected, but pointing at an old StepWind location"
+              : skillMissing ? "Connected — agent skill not installed yet"
+              : a.skillSupported ? "Connected · skill installed" : "Connected")
+            : a.detected ? "Ready to connect" : "Not found on this PC";
+          return `
           <div class="card g-card ${a.detected ? "" : "dim"}" data-i="${i}">
             <div class="g-head">
               <div class="g-ico ${a.connected ? "green" : "indigo"}">
@@ -1071,18 +1078,18 @@ async function loadAgents() {
               </div>
               <div style="min-width:0">
                 <div class="g-title">${esc(a.name)}</div>
-                <div class="g-sub ${a.connected && !a.needsRepair ? "ok" : ""}" ${a.needsRepair ? 'style="color:var(--warn-text)"' : ""}>${a.connected
-                  ? (a.needsRepair ? "Connected, but pointing at an old StepWind location" : "Connected")
-                  : a.detected ? "Ready to connect" : "Not found on this PC"}</div>
+                <div class="g-sub ${a.connected && !a.needsRepair && !skillMissing ? "ok" : ""}" ${a.needsRepair || skillMissing ? 'style="color:var(--warn-text)"' : ""}>${sub}</div>
               </div>
             </div>
             <div class="g-foot">
               <div class="g-path" title="${esc(a.configPath)}">${esc(a.configPath)}</div>
               ${a.detected && !a.connected ? `<button class="btn primary ag-act" data-id="${esc(a.id)}" data-act="connect">Connect</button>` : ""}
               ${a.connected && a.needsRepair ? `<button class="btn primary ag-act" data-id="${esc(a.id)}" data-act="connect">Repair</button>` : ""}
+              ${skillMissing ? `<button class="btn primary ag-act" data-id="${esc(a.id)}" data-act="connect">Add skill</button>` : ""}
               ${a.connected ? `<button class="btn ag-act" data-id="${esc(a.id)}" data-act="disconnect">Disconnect</button>` : ""}
             </div>
-          </div>`).join("")}
+          </div>`;
+        }).join("")}
       </div>
 
       <div class="page-sub" style="margin:14px 2px 8px;font-weight:600;color:var(--text-3);text-transform:uppercase;font-size:10px;letter-spacing:1.4px">Manual setup — any other MCP client</div>
@@ -1092,6 +1099,11 @@ async function loadAgents() {
           <pre class="mono" style="background:var(--inset);border:1px solid var(--line);border-radius:8px;padding:12px;font-size:11.5px;line-height:1.6;overflow:auto;user-select:text">${esc(mcp?.snippet || "")}</pre>
           <button class="btn" id="ag-copy" style="position:absolute;top:8px;right:8px;padding:5px 12px">Copy</button>
         </div>
+        ${mcp?.skill ? `
+        <div class="set-sub" style="margin-top:12px">If the tool supports <strong>Agent Skills</strong> (SKILL.md files), also give it StepWind's skill — it teaches the AI <em>when</em> to checkpoint, diff, and restore. Save it as <span class="mono" style="font-size:11px">skills/stepwind/SKILL.md</span> in that tool's skills folder.</div>
+        <div class="set-actions" style="justify-content:flex-start;margin-top:8px">
+          <button class="btn" id="ag-copy-skill">Copy skill</button>
+        </div>` : ""}
         <div class="set-sub" style="margin-top:10px">Before StepWind edits any tool's config it saves a copy — newest first in the backups folder.</div>
         <div class="set-actions" style="justify-content:flex-start;margin-top:8px">
           <button class="btn" id="ag-backups">Open backups folder</button>
@@ -1105,6 +1117,13 @@ async function loadAgents() {
     await call("copyText", { text: mcp?.snippet || "" });
     toast("ok", "Copied", "Paste it into the AI tool's MCP settings.");
   };
+  const copySkill = $("#ag-copy-skill", host);
+  if (copySkill) {
+    copySkill.onclick = async () => {
+      await call("copyText", { text: mcp?.skill || "" });
+      toast("ok", "Copied", "Save it as skills/stepwind/SKILL.md in the tool's skills folder.");
+    };
+  }
   $$(".ag-act", host).forEach((b) => (b.onclick = async () => {
     if (b.dataset.act === "disconnect") {
       const ok = await dlg.confirm(`Disconnect ${b.dataset.id}?`,

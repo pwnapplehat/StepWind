@@ -205,6 +205,8 @@ public sealed class Bridge(MainWindow window)
                 ["detected"] = t.Installed,
                 ["connected"] = t.Configured,
                 ["needsRepair"] = stale,
+                ["skillSupported"] = SkillInstaller.SupportsSkill(t.Id),
+                ["skillInstalled"] = SkillInstaller.IsInstalled(t.Id),
                 ["note"] = t.Note,
             });
         }
@@ -224,10 +226,27 @@ public sealed class Bridge(MainWindow window)
                 ? await Task.Run(() => McpInstaller.Install(target, exe))
                 : new McpInstallResult(false,
                     $"StepWind.Mcp.exe was not found next to the app ({exe}). Repair the StepWind installation first — nothing was changed.");
+
+            // The MCP config gives the agent the tools; the skill teaches it WHEN to use them
+            // (checkpoint before risky edits, diff after, restore on regret). Installed into the
+            // tool's own skills folder — our namespaced file only, nothing of the user's touched.
+            if (result.Ok && SkillInstaller.SupportsSkill(targetId))
+            {
+                SkillInstallResult skill = await Task.Run(() => SkillInstaller.Install(targetId, target.DisplayName));
+                result = result with { Message = $"{result.Message} {skill.Message}".Trim() };
+            }
         }
         else
         {
             result = await Task.Run(() => McpInstaller.Remove(target));
+            if (result.Ok && SkillInstaller.SupportsSkill(targetId))
+            {
+                SkillInstallResult skill = await Task.Run(() => SkillInstaller.Remove(targetId));
+                if (skill.Message.Length > 0)
+                {
+                    result = result with { Message = $"{result.Message} {skill.Message}".Trim() };
+                }
+            }
         }
 
         return new JsonObject { ["ok"] = result.Ok, ["message"] = result.Message };
@@ -238,7 +257,22 @@ public sealed class Bridge(MainWindow window)
         ["serverPath"] = McpServerPath,
         ["snippet"] = "{\n  \"mcpServers\": {\n    \"stepwind\": {\n      \"command\": "
                       + JsonSerializer.Serialize(McpServerPath) + "\n    }\n  }\n}",
+        // The agent skill text, for tools with a skills folder we don't auto-manage — users
+        // drop it in themselves (e.g. <tool>/skills/stepwind/SKILL.md).
+        ["skill"] = ReadShippedSkill(),
     };
+
+    private static string ReadShippedSkill()
+    {
+        try
+        {
+            return File.ReadAllText(SkillInstaller.ShippedSkillPath);
+        }
+        catch (Exception)
+        {
+            return ""; // missing skill file — the UI hides the copy button
+        }
+    }
 
     // ─────────────────────────────── shell helpers ───────────────────────────────
 

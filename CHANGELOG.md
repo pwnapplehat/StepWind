@@ -22,6 +22,11 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
 - **Internationalization foundation.** Dates and numbers follow your Windows locale; UI text
   flows through a translatable string catalog (adding a language is a single data file). English
   ships complete.
+- **Agent skill.** Connecting an AI tool that supports Agent Skills (Cursor, Claude Code) also
+  installs StepWind's `SKILL.md` — teaching the agent to checkpoint before risky edits, diff
+  after, and restore on regret, so the MCP tools get used at the right moments. Other tools can
+  copy the skill from the manual-setup card. Removed cleanly on disconnect; never touches any
+  other skill.
 
 - **Trustworthy updates without a paid certificate.** A verified-but-unsigned release is no
   longer run silently as SYSTEM — it's downloaded, checksum-verified, ACL-locked, and offered as a

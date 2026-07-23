@@ -67,6 +67,12 @@ with comments is never rewritten and silently stripped), a timestamped backup be
 change, atomic writes, and post-write verification that auto-restores the backup if anything
 looks wrong. Disconnecting removes exactly our entry and nothing else.
 
+Tools give an agent *capabilities*; habits are what keep your files safe. So where the tool
+supports **Agent Skills** (Cursor, Claude Code), connecting also installs StepWind's skill —
+a `SKILL.md` that teaches the AI to checkpoint before risky edits, diff `latest:` vs
+`current:` after them, and restore instead of guessing when something breaks. Other
+skill-capable tools can copy the same skill from the manual-setup card.
+
 ## Built right from day one
 
 - **Content-defined chunking + dedup** so history is cheap even for huge files, and identical

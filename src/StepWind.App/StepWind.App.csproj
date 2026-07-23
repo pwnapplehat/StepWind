@@ -24,6 +24,9 @@
     <!-- The web front end ships as loose files beside the exe; WebView2 serves them over a
          virtual host. CopyToPublishDirectory keeps them intact through single-file publish. -->
     <Content Include="web\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <!-- The agent skill (SKILL.md) ships beside the exe; Connect installs it into AI tools that
+         support file-based skills (Cursor, Claude Code) so agents know WHEN to use the MCP tools. -->
+    <Content Include="skills\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
