@@ -908,7 +908,6 @@ async function loadFolders() {
     </div>
     </div>`;
 
-  $$(".g-card", host).forEach((c, i) => stagger(c, i));
   $$(".g-open", host).forEach((b) => (b.onclick = () => call("openPath", { path: b.dataset.p })));
   $("#fo-add", host).onclick = addFolder;
   $$(".g-remove", host).forEach((b) => (b.onclick = () => removeFolder(b.dataset.p)));
@@ -1100,7 +1099,6 @@ async function loadAgents() {
       </div>
     </div>`;
 
-  $$(".g-card", host).forEach((c, i) => stagger(c, i));
   $("#ag-rescan", host).onclick = loadAgents;
   $("#ag-backups", host).onclick = () => call("openBackups");
   $("#ag-copy", host).onclick = async () => {

@@ -8,7 +8,10 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root, :root[data-theme="dark"] {
-  --bg: #07090D;
+  /* Neutral near-black (no blue cast). The main content area is this color + the ambient layer,
+     and a blue-tinted canvas under hours of use reads as eye strain — the rail/floats keep their
+     subtle cool tint as distinct surfaces, but the big canvas stays hue-neutral. */
+  --bg: #09090B;
   --rail: #0A0D13;
   --panel: rgba(255, 255, 255, 0.028);
   --panel-hover: rgba(255, 255, 255, 0.05);
@@ -54,9 +57,11 @@
   --diff-add-fg: #A7F3D0;
   --diff-del-bg: rgba(251, 113, 133, 0.09);
   --diff-del-fg: #FECDD3;
+  /* Depth without hue: one whisper-faint neutral glow. The old indigo+cyan glows painted a
+     visible blue wash across the main view (the sidebar is opaque and covered them, which is
+     why only the right side looked "dark blue"). */
   --ambient:
-    radial-gradient(52rem 34rem at -8% -12%, rgba(99, 102, 241, 0.075), transparent 60%),
-    radial-gradient(46rem 30rem at 108% 112%, rgba(34, 211, 238, 0.05), transparent 60%);
+    radial-gradient(52rem 34rem at -8% -12%, rgba(255, 255, 255, 0.018), transparent 60%);
 
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
@@ -362,8 +367,8 @@ body {
 /* ═══════════════ Timeline ═══════════════ */
 
 /* Vertical scrollers used across views. overflow-x:hidden clips the few-px horizontal
-   overshoot of the entrance animations (row-in/card-in translate on X), which otherwise
-   flashed a transient horizontal scrollbar for the ~0.3s the animation ran. scrollbar-gutter
+   overshoot of the row entrance animation (row-in translates on X), which otherwise flashed
+   a transient horizontal scrollbar for the ~0.3s the animation ran. scrollbar-gutter
    reserves the vertical scrollbar's width up front, so it APPEARING partway through a
    staggered entrance can't shrink the content box and reflow a grid (the "cards jump" bug). */
 .scroll-y { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
@@ -398,7 +403,10 @@ body {
 .enter > .tl-row { animation: row-in 0.34s var(--ease) forwards; }
 .enter > .f-row  { animation: row-in 0.3s var(--ease) forwards; }
 .enter > .v-row  { animation: row-in 0.3s var(--ease) forwards; }
-.enter > .g-card { animation: card-in 0.4s var(--ease) forwards; }
+/* Cards: a plain quick fade — no translate/scale, no stagger. Grid cards moving as they appear
+   is what read as "bouncing"; a calm 0.16s fade feels instant. */
+.enter > .g-card { animation: card-fade 0.16s var(--ease) forwards; }
+@keyframes card-fade { from { opacity: 0; } to { opacity: 1; } }
 /* Settled-state mode (screenshots / reduced motion): kill every animation+transition AND
    force the entrance elements to their final opacity (they start at 0 waiting for the
    keyframe, which no-anim would otherwise cancel — leaving them invisible). */
@@ -540,12 +548,13 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
 /* ═══════════════ Folders / Agents ═══════════════ */
 
 .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; align-content: start; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; flex: 1; padding: 2px; }
+/* Settled by default — entrance is opt-in via .enter (same contract as rows). The old
+   unconditional 0.4s translate+scale entrance replayed on EVERY tab switch and, with per-card
+   stagger delays, read as the whole grid jittering/bouncing for a second. */
 .g-card {
   padding: 15px 16px; display: flex; flex-direction: column; gap: 10px;
-  opacity: 0; animation: card-in 0.4s var(--ease) forwards;
   transition: transform 0.18s var(--ease), border-color 0.18s var(--ease), background 0.18s var(--ease);
 }
-@keyframes card-in { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
 .g-card:hover { transform: translateY(-2px); border-color: var(--line-strong); background: var(--panel-hover); }
 .g-card.dim { opacity: 0.42 !important; }
 .g-card.dim:hover { transform: none; }
