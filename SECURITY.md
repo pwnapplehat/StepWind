@@ -35,11 +35,19 @@ The pipe is reachable by authenticated local users, but the service authorizes e
 | Add a protected folder | any user, but only a folder **their own token can read** (so the SYSTEM service can't be used to capture files they couldn't read); the adder becomes the owner |
 | Stop protecting / purge one root's history | that root's owner or an administrator |
 | Purge **all** history / "unprotected" history | administrator only |
-| Change encryption / auto-update / retention settings | the connecting user (these are machine config; see "Known limitations") |
+| Change machine-wide settings (encryption, index encryption, auto-update, flight recorder, `.gitignore` policy, storage limits, retention) | the connecting user while only one real user owns history here; an **administrator** once a second user does |
 
-**Root ownership** is recorded when a folder is added, backfilled from the folder's on-disk owner
-for pre-existing installs, and always has a live fallback: if your own token can read the folder,
-you may see its history (that is never an escalation).
+**Machine-wide settings on shared PCs:** as long as a single real user owns protected history —
+the common case — that user changes machine-wide settings from the unelevated app with no
+friction, because they are the machine's owner in every meaningful sense. The moment a second
+user owns history on the same PC, those settings require an administrator (so no user can, say,
+switch encryption off for everyone). An admin applies them from an elevated terminal:
+`stepwind-cli set-settings <json>`. Per-user concerns — folders, exclusions, what the timeline
+shows — always stay under the ownership rules above.
+
+**Root ownership** is recorded when a folder is added, backfilled from the folder's on-disk NTFS
+owner when no owner is on record (e.g. after a settings reset), and always has a live fallback:
+if your own token can read the folder, you may see its history (that is never an escalation).
 
 ## Operation-undo handles are not forgeable
 
@@ -52,6 +60,13 @@ as SYSTEM."
 
 Version history lives under `%ProgramData%\StepWind\store`, ACL-locked to **SYSTEM +
 Administrators** (standard users can't read it directly — they go through the authorized pipe).
+
+Each protected folder stores its history under a **stable namespace**: normally the folder's own
+name, or a deterministic `name~hash` id when another protected folder already uses that name — so
+two folders that are both called "Documents" keep fully separate histories and owner sets.
+Removing a folder keeps its namespace reserved (history stays restorable), an unrelated
+same-named folder can never silently adopt it, and re-protecting the same path re-attaches its
+old history.
 Optional encryption at rest is AES-256-GCM with a key sealed by machine-scope DPAPI. **Encryption
 protects blob *content* at rest** (a stolen/offline drive can't be read elsewhere). By default the
 *index* (file names, paths, dates) is plaintext; enabling **"Also encrypt the index"** (Settings →
@@ -109,18 +124,12 @@ as above.
 
 ## Known limitations (honest)
 
-- ~~Machine-wide config isn't elevation-gated.~~ **Lifted where it matters.** On a PC where more
-  than one real user owns protected history, machine-wide settings (encryption, index encryption,
-  auto-update, the flight recorder, `.gitignore` capture policy, storage limits, retention) can
-  only be changed by an administrator — apply them from an elevated terminal with
-  `stepwind-cli set-settings <json>`. On a single-user machine the sole user keeps the
-  frictionless unelevated flow, since they *are* the machine's owner in every meaningful sense.
-- ~~Same-name folders can't both be protected.~~ **Lifted.** Every protected root now has a
-  stable store namespace (`RootIds` in settings): existing folders keep their leaf name — zero
-  data migration — and a new folder whose name is taken (by a live root, a removed root, or dead
-  history in the store) gets a deterministic `leaf~hash` id. Two "Documents" folders keep fully
-  separate histories and owner sets, and a newly protected folder can never silently adopt a
-  removed folder's timeline.
 - **Metadata encryption is opt-in.** File paths, names, and timestamps in the version index are
   plaintext by default even when blob content is encrypted; enable "Also encrypt the index" to
   cover them too (see "The store").
+- **The whole-machine timeline needs a change journal.** Drives without one (exFAT, network
+  shares, some removable media) aren't on the flight-recorder timeline — the app's coverage panel
+  shows exactly which drives are recorded. Folder version history works on any filesystem
+  regardless.
+- **Local machine only.** StepWind protects the Windows machine it runs on; files inside WSL
+  distributions or on remote machines aren't covered.

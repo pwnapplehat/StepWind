@@ -77,8 +77,8 @@ public sealed class WatchEngine : IDisposable
 
     /// <summary>
     /// Root path → store namespace (first stored path segment). Defaults to the folder leaf when
-    /// a root has no entry, which is also the pre-RootIds behavior — so tests and old callers are
-    /// unchanged. Supplied by the host from <see cref="StepWindSettings.RootIds"/>, which is what
+    /// a root has no entry (the common single-name case, and what direct construction in tests
+    /// uses). Supplied by the host from <see cref="StepWindSettings.RootIds"/>, which is what
     /// lets two protected folders share a leaf name without sharing a history namespace.
     /// </summary>
     private readonly IReadOnlyDictionary<string, string>? _rootNamespaces;

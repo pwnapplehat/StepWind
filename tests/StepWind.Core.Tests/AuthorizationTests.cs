@@ -160,10 +160,10 @@ public class AuthorizationTests : IDisposable
     [Fact]
     public void Adding_a_folder_that_collides_on_leaf_name_gets_its_own_namespace()
     {
-        // Two protected folders sharing a leaf used to be REFUSED (they'd have merged under one
-        // history namespace — a wrong-tree restore/purge hazard). Stable per-root ids lift that:
-        // the add now succeeds and the newcomer gets a distinct suffixed namespace, so nothing
-        // can merge. Full behavioral coverage lives in RootNamespaceTests.
+        // Two protected folders sharing a leaf must never merge under one history namespace
+        // (that would be a wrong-tree restore/purge hazard). Stable per-root ids make the add
+        // safe: it succeeds and the newcomer gets a distinct suffixed namespace, so nothing can
+        // merge. Full behavioral coverage lives in RootNamespaceTests.
         string otherDocs = Path.Combine(_root, "other", "Docs");
         Directory.CreateDirectory(otherDocs);
 

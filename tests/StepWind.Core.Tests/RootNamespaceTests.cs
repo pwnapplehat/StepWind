@@ -9,7 +9,7 @@ namespace StepWind.Core.Tests;
 /// <summary>
 /// Stable per-root namespaces: two protected folders may share a leaf name ("Documents") and keep
 /// fully separate histories. The rules pinned here:
-///  • existing roots keep their leaf namespace (zero migration on upgrade);
+///  • a folder already watched at startup adopts its own unmapped history (settings-reset safety);
 ///  • a colliding new root gets a deterministic "leaf~hash" namespace;
 ///  • dead history in the store also blocks a leaf (a new unrelated folder must never silently
 ///    adopt a removed folder's timeline);
@@ -44,8 +44,8 @@ public class RootNamespaceTests : IDisposable
         StepWindSettings settings = Settings(Path.Combine(_root, "store"), docsA, docsB);
         using var host = new StepWindHost(settings, new GzipBlobCodec());
 
-        // Same file name in both folders, different content — the old model would have refused
-        // the second folder outright; now each lives in its own namespace.
+        // Same file name in both folders, different content — each folder lives in its own
+        // namespace, so both are protected side by side and nothing merges.
         File.WriteAllText(Path.Combine(docsA, "notes.txt"), "contents from drive A");
         File.WriteAllText(Path.Combine(docsB, "notes.txt"), "contents from drive B");
 
@@ -69,20 +69,21 @@ public class RootNamespaceTests : IDisposable
     }
 
     [Fact]
-    public void Existing_roots_keep_their_leaf_namespace_on_upgrade()
+    public void A_watched_folder_adopts_its_own_unmapped_history_at_startup()
     {
         string docs = Path.Combine(_root, "user", "Documents");
         Directory.CreateDirectory(docs);
         string storeRoot = Path.Combine(_root, "store");
 
-        // Simulate a pre-RootIds install: store already has history under the plain leaf.
+        // The store has history under the plain leaf but settings carry no mapping for it
+        // (e.g. settings.json was reset or restored while the store survived).
         var log = new VersionLog(Path.Combine(storeRoot, "versions.jsonl"));
         log.Append(new FileVersion { RelativePath = "Documents/old.txt", CapturedUtc = DateTime.UtcNow, Size = 1, Chunks = [] });
 
-        StepWindSettings settings = Settings(storeRoot, docs); // RootIds empty = upgrade
+        StepWindSettings settings = Settings(storeRoot, docs); // RootIds empty, store not
         using var host = new StepWindHost(settings, new GzipBlobCodec());
 
-        // The folder adopted its own historical namespace — no migration, no suffix.
+        // The folder adopted its own history's namespace — nothing orphaned, no suffix.
         Assert.Equal("Documents", settings.RootIds[docs]);
     }
 
@@ -113,8 +114,8 @@ public class RootNamespaceTests : IDisposable
         Assert.NotEqual("Projects", ns);                 // did NOT adopt the dead timeline
         Assert.StartsWith("Projects~", ns);              // deterministic suffixed id
 
-        // The upgrade path is the opposite by design: a folder already watched at startup CLAIMS
-        // its own leaf segment (see Existing_roots_keep_their_leaf_namespace_on_upgrade).
+        // The startup pass is the opposite by design: a folder already watched at startup CLAIMS
+        // its own leaf segment (see A_watched_folder_adopts_its_own_unmapped_history_at_startup).
     }
 
     [Fact]

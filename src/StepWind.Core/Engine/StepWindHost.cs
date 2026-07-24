@@ -327,13 +327,13 @@ public sealed class StepWindHost : IDisposable
         caller.IsPrivileged ? null : IpcResponse.Fail("This action requires an administrator.");
 
     // ── root namespaces: stable per-root store ids ───────────────────────────────────────────
-    // A stored relative path's FIRST SEGMENT is its root namespace. Historically that was the
-    // folder leaf ("Documents"), which made two same-named folders impossible to protect at
-    // once. Namespaces are now assigned per root and remembered in settings: existing roots keep
-    // their leaf (zero data migration), and a new root whose leaf is taken — by a live root, a
-    // removed root's mapping, or dead history in the store — gets a deterministic "leaf~hash8".
-    // Ownership is recorded per namespace; a namespace maps back to its live folder path so the
-    // "can the caller actually read this folder" safety net can run.
+    // A stored relative path's FIRST SEGMENT is its root namespace. Namespaces are assigned per
+    // root and remembered in settings (RootIds): a root normally gets its folder leaf
+    // ("Documents"); when that name is taken — by a live root, a removed root's kept mapping, or
+    // dead history in the store — it gets a deterministic "leaf~hash8" instead. That is what lets
+    // two same-named folders hold fully separate histories. Ownership is recorded per namespace;
+    // a namespace maps back to its live folder path so the "can the caller actually read this
+    // folder" safety net can run.
 
     /// <summary>The store namespace for a protected root (assigning one if it's new).</summary>
     private string NamespaceOf(string root)
@@ -347,12 +347,14 @@ public sealed class StepWindHost : IDisposable
     }
 
     /// <summary>
-    /// Assigns namespaces to every watched folder that lacks one. This is the STARTUP/UPGRADE
-    /// pass, so it lets a folder CLAIM a store segment matching its own leaf: pre-RootIds
-    /// installs stored that folder's history under exactly that segment, and refusing it here
-    /// would orphan every existing user's history on upgrade. (Two watched folders can't have
-    /// shared a leaf before RootIds existed — the old code refused the second one — so the claim
-    /// is unambiguous; the first mapped folder wins and any later one is suffixed via Values.)
+    /// Assigns namespaces to every watched folder that lacks one. This startup pass lets a
+    /// folder CLAIM a store segment matching its own leaf, because an already-watched folder
+    /// with unmapped history under exactly that segment almost certainly owns it (the mapping
+    /// can be missing when settings.json was reset/restored while the store survived) — refusing
+    /// would orphan that folder's history behind a suffixed id. The claim is safe: the first
+    /// mapped folder wins, any later same-leaf folder is suffixed via the Values check, and
+    /// folders added ONLINE never claim (see the claimStoreSegments flag) so an unrelated
+    /// newcomer can't adopt a dead timeline.
     /// </summary>
     private void EnsureRootIds()
     {
@@ -382,7 +384,7 @@ public sealed class StepWindHost : IDisposable
             }
 
             // Taken namespaces: every mapped id (live or kept-after-removal). For a folder added
-            // ONLINE (post-upgrade), first segments already present in the store are also taken —
+            // ONLINE (interactively, after startup), first segments already in the store are also taken —
             // dead history must never be silently adopted by an unrelated folder that happens to
             // share its name. The startup pass claims instead (see EnsureRootIds).
             var taken = new HashSet<string>(_settings.RootIds.Values, StringComparer.OrdinalIgnoreCase);
@@ -983,7 +985,7 @@ public sealed class StepWindHost : IDisposable
     ///    use the SYSTEM service to capture — then read — files it has no rights to);
     ///  • a non-privileged caller may only REMOVE a folder it owns (no un-protecting someone
     ///    else's folder).
-    /// Same-name folders are NOT refused anymore: stable per-root namespaces (see
+    /// Same-name folders are safe to add: stable per-root namespaces (see
     /// <see cref="EnsureRootId"/>) give a colliding leaf its own store segment, so two
     /// "Documents" from different drives keep fully separate histories.
     /// Returns a failure response to reject the change, or null to allow it.
