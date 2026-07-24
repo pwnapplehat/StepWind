@@ -94,9 +94,10 @@ restarts, so a user can never change a managed setting even before the next poli
 
 ## 3. Security audit trail
 
-When auditing is enabled (default), StepWind writes security-relevant actions to a dedicated
-**`StepWind`** Windows Event Log — a standard local, append-only sink your SIEM or Windows Event
-Forwarding (WEF) subscription can collect. Nothing is ever sent anywhere by StepWind itself.
+When auditing is enabled (default), StepWind writes security-relevant actions to the Windows
+**Application** event log under the dedicated source **`StepWind.Audit`** — a standard local,
+append-only sink your SIEM or Windows Event Forwarding (WEF) subscription can collect by filtering
+that provider. Nothing is ever sent anywhere by StepWind itself.
 
 Each record names the acting user, the outcome (OK / DENIED-FAILED), and details. Stable Event IDs:
 
@@ -115,10 +116,15 @@ Each record names the acting user, the outcome (OK / DENIED-FAILED), and details
 | 4000 / 4001 | Update staged / launched |
 | 5000 | Machine policy enforced at startup |
 
-Collect via a WEF subscription on the `StepWind` log, or point your EDR/agent at it. Example query:
+Collect via a WEF subscription filtered on provider `StepWind.Audit`, or point your EDR/agent at
+it. Example queries:
 
-```
-wevtutil qe StepWind /q:"*[System[(EventID=3000 or EventID=2001)]]" /f:text /c:20
+```powershell
+# All StepWind audit events (PowerShell):
+Get-WinEvent -FilterHashtable @{ LogName='Application'; ProviderName='StepWind.Audit' } -MaxEvents 50
+
+# Just purges and policy-denied attempts (wevtutil):
+wevtutil qe Application /q:"*[System[Provider[@Name='StepWind.Audit'] and (EventID=3000 or EventID=2001)]]" /f:text /c:20
 ```
 
 ## 4. What the service can and cannot do

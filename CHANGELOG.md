@@ -124,8 +124,9 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
   removes the shared-PC question. The tray app shows managed settings dimmed with a clear notice.
 - **Security audit trail.** Every security-relevant action — settings changes, purges, restores,
   reversals, folder changes, encryption toggles, updates, and policy-denied attempts — is written
-  (naming the acting user, with stable Event IDs) to a dedicated `StepWind` Windows Event Log,
-  ready for Windows Event Forwarding or any SIEM/EDR. Nothing leaves the machine on its own.
+  (naming the acting user, with stable Event IDs) to the Windows Application event log under the
+  dedicated `StepWind.Audit` source, ready for Windows Event Forwarding or any SIEM/EDR. Nothing
+  leaves the machine on its own.
 - **Fleet deployment.** Silent EXE install for Intune/ConfigMgr (`/VERYSILENT`), a documented
   registry/ADMX policy reference, and a managed uninstall that preserves history by default. See
   [`enterprise/README.md`](enterprise/README.md).

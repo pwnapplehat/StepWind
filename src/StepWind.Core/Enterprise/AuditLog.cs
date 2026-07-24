@@ -51,17 +51,24 @@ public sealed class NullAuditSink : IAuditSink
 }
 
 /// <summary>
-/// Writes audit records to a dedicated <c>StepWind</c> Windows Event Log — the standard local,
-/// tamper-evident, SIEM-forwardable sink (Windows Event Forwarding / any EDR agent can ship it;
-/// nothing ever leaves the machine on its own). Creating the log source needs administrator
-/// rights, which the SYSTEM service has; if creation fails (e.g. an unprivileged dev run) the sink
-/// degrades to the optional fallback logger and never throws into the caller.
+/// Writes audit records to the Windows <b>Application</b> event log under a dedicated source,
+/// <c>StepWind.Audit</c> — the standard local, tamper-evident, SIEM-forwardable sink (Windows
+/// Event Forwarding / any EDR agent can ship it; nothing ever leaves the machine on its own).
+/// SIEMs filter by provider name <c>StepWind.Audit</c> and the stable Event IDs.
+///
+/// We deliberately use the Application log rather than a private custom log: creating a custom log
+/// is racy (a fresh log isn't immediately writable) and permission-sensitive, whereas the
+/// Application log always exists and a distinct source is the bulletproof pattern. The source name
+/// must differ from the service's own <c>StepWind</c> logger source (the .NET Windows Service host
+/// registers that for its ILogger); a source belongs to exactly one log, so reusing it would drop
+/// writes. Registering the source needs administrator rights, which the SYSTEM service has; if it
+/// fails (e.g. an unprivileged dev run) the sink degrades to the fallback logger and never throws.
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class EventLogAuditSink : IAuditSink, IDisposable
 {
-    public const string LogName = "StepWind";
-    public const string SourceName = "StepWind";
+    public const string LogName = "Application";
+    public const string SourceName = "StepWind.Audit";
 
     private readonly EventLog? _log;
     private readonly Action<string>? _fallback;

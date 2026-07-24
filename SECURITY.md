@@ -151,9 +151,10 @@ managed environment. An ADMX/ADML template ships in `enterprise/policy/`.
 
 Every security-relevant action (settings changes, purges, restores, reversals, folder changes,
 encryption toggles, updates, and policy-denied attempts) is written — naming the acting user — to
-a dedicated **`StepWind` Windows Event Log**, the standard local, SIEM-forwardable audit sink
-(Windows Event Forwarding or any EDR agent can collect it; StepWind itself never sends anything).
-Full deployment, policy, and audit reference: [`enterprise/README.md`](enterprise/README.md).
+the Windows **Application** event log under the dedicated source **`StepWind.Audit`** (with stable
+Event IDs), the standard local, SIEM-forwardable audit sink (Windows Event Forwarding or any EDR
+agent can collect it by that source; StepWind itself never sends anything). Full deployment,
+policy, and audit reference: [`enterprise/README.md`](enterprise/README.md).
 
 ## Known limitations (honest)
 
