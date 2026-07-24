@@ -6,8 +6,8 @@ this document is precise about what the service will and won't do, who can ask i
 how updates are trusted.
 
 If you find a security issue, please open a
-[GitHub security advisory](https://github.com/pwnapplehat/StepWind/security/advisories/new) rather
-than a public issue.
+[GitHub security advisory](https://github.com/pwnapplehat/StepWind/security/advisories/new) or
+email **contact@stepwind.app** rather than filing a public issue.
 
 ## Components and privilege
 
