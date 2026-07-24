@@ -182,6 +182,61 @@ public class AuthorizationTests : IDisposable
     }
 
     [Fact]
+    public void Machine_wide_settings_stay_frictionless_on_a_single_user_machine()
+    {
+        // Only ONE real user owns history here (the fixture seeds just _mySid), so the owner may
+        // flip machine-wide settings from the unelevated GUI exactly as before.
+        IpcResponse resp = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { AutoUpdateEnabled = false }),
+        }, Owner);
+
+        Assert.True(resp.Ok, resp.Error);
+    }
+
+    [Fact]
+    public void Machine_wide_settings_need_an_admin_once_a_second_user_owns_history()
+    {
+        // A second REAL user (unresolvable S-1-5-21 SID with a normal RID — a deleted or roaming
+        // profile counts deliberately) also owns protected history → the machine is shared.
+        _settings.RootOwners["OtherUsersFolder"] = [StrangerSid];
+
+        // Non-privileged: changing a machine-wide setting is refused with a readable reason…
+        IpcResponse denied = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { AutoUpdateEnabled = false }),
+        }, Owner);
+        Assert.False(denied.Ok);
+        Assert.Contains("administrator", denied.Error!, StringComparison.OrdinalIgnoreCase);
+
+        // …echoing the CURRENT value back is not a change and passes (the GUI patches sections)…
+        IpcResponse echo = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { AutoUpdateEnabled = _settings.AutoUpdateEnabled }),
+        }, Owner);
+        Assert.True(echo.Ok, echo.Error);
+
+        // …per-user concerns (their own folders) remain governed by ownership, not this gate…
+        IpcResponse folders = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { WatchedFolders = new[] { _watch } }),
+        }, Owner);
+        Assert.True(folders.Ok, folders.Error);
+
+        // …and a privileged caller can still change anything.
+        IpcResponse admin = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { AutoUpdateEnabled = false }),
+        }, Admin);
+        Assert.True(admin.Ok, admin.Error);
+    }
+
+    [Fact]
     public void The_in_process_caller_keeps_full_trust()
     {
         // Tests, the CLI, and direct in-process calls run inside the engine's trust boundary and

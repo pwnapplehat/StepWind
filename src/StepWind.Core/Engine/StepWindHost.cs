@@ -724,6 +724,12 @@ public sealed class StepWindHost : IDisposable
             return IpcResponse.Fail("bad settings payload");
         }
 
+        IpcResponse? machineWideDenied = AuthorizeMachineWideChange(caller, patch);
+        if (machineWideDenied is not null)
+        {
+            return machineWideDenied;
+        }
+
         if (patch.EncryptionEnabled is bool enc && enc != _settings.EncryptionEnabled)
         {
             if (_migCodec is null)
@@ -906,6 +912,69 @@ public sealed class StepWindHost : IDisposable
 
         EnsureCanAccessRelative(caller, relativePath);
         return Ok(BuildHistory(relativePath));
+    }
+
+    /// <summary>
+    /// On a machine where MORE THAN ONE real user owns protected history, machine-wide behavior
+    /// (encryption, index encryption, auto-update, the flight recorder, .gitignore capture
+    /// policy, storage limits, retention) may only be changed by an administrator — otherwise any
+    /// user could, say, switch encryption off for everyone. On a single-user machine (the common
+    /// case) the one real user IS the machine owner, so nothing changes for them. Per-user
+    /// concerns (folders, exclusions, timeline display) stay under the ownership rules.
+    /// </summary>
+    private IpcResponse? AuthorizeMachineWideChange(CallerContext caller, SettingsPatch patch)
+    {
+        if (caller.IsPrivileged)
+        {
+            return null;
+        }
+
+        // Only CHANGES count — echoing the current value back (the GUI patches whole sections)
+        // must not be refused.
+        bool touchesMachineWide =
+            (patch.EncryptionEnabled is bool e && e != _settings.EncryptionEnabled) ||
+            (patch.EncryptIndex is bool ei && ei != _settings.EncryptIndex) ||
+            (patch.AutoUpdateEnabled is bool au && au != _settings.AutoUpdateEnabled) ||
+            (patch.FlightRecorderEnabled is bool fr && fr != _settings.FlightRecorderEnabled) ||
+            (patch.RespectGitIgnore is bool rg && rg != _settings.RespectGitIgnore) ||
+            (patch.MinFreeDiskBytes is long mf && mf != _settings.MinFreeDiskBytes) ||
+            (patch.MaxStoreBytes is long ms && ms != _settings.MaxStoreBytes) ||
+            (patch.RetentionKeepAllHours is int ka && ka != _settings.Retention.KeepAllHours) ||
+            (patch.RetentionHourlyDays is int hd && hd != _settings.Retention.HourlyDays) ||
+            (patch.RetentionDailyDays is int dd && dd != _settings.Retention.DailyDays) ||
+            (patch.RetentionMaxAgeDays is int ma && ma != _settings.Retention.MaxAgeDays) ||
+            (patch.RetentionMaxVersionsPerFile is int mv && mv != _settings.Retention.MaxVersionsPerFile);
+
+        if (!touchesMachineWide || !IsMultiUserMachine())
+        {
+            return null;
+        }
+
+        return IpcResponse.Fail(
+            "This PC has protected history belonging to more than one user, so machine-wide settings " +
+            "(encryption, updates, retention, storage limits, the flight recorder) can only be changed " +
+            "by an administrator. From an elevated terminal, run: stepwind-cli set-settings <json>");
+    }
+
+    /// <summary>More than one REAL user account owns protected history on this machine.</summary>
+    private bool IsMultiUserMachine()
+    {
+        var users = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        lock (_ownersLock)
+        {
+            foreach (List<string> owners in _settings.RootOwners.Values)
+            {
+                foreach (string sid in owners)
+                {
+                    if (RootAccess.IsRealUserSid(sid))
+                    {
+                        users.Add(sid);
+                    }
+                }
+            }
+        }
+
+        return users.Count > 1;
     }
 
     /// <summary>

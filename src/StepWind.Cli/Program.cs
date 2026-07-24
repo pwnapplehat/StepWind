@@ -38,6 +38,9 @@ return args.FirstOrDefault()?.ToLowerInvariant() switch
     "protect" => ProtectFolder(Arg(args, 1), add: true),
     "unprotect" => ProtectFolder(Arg(args, 1), add: false),
     "relocate-store" => Call(StepWind.Core.Ipc.IpcCommand.RelocateStore, a1: Arg(args, 1)),
+    // Raw settings patch (JSON), e.g. set-settings {"EncryptionEnabled":true}. On a shared PC,
+    // machine-wide settings require elevation — run this from an elevated terminal.
+    "set-settings" => Call(StepWind.Core.Ipc.IpcCommand.SetSettings, a1: Arg(args, 1)),
     _ => Help(),
 };
 
@@ -304,6 +307,7 @@ static int Help()
           stepwind-cli relocate-store <folder>       move the history store to a new folder (admin)
           stepwind-cli purge "*"|unprotected|<prefix>  delete stored history (destructive)
           stepwind-cli set-encryption on|off         toggle store encryption
+          stepwind-cli set-settings <json>           raw settings patch (shared PCs: run elevated)
         Recovery (admin):
           stepwind-cli export-recovery-key <passphrase> <out-file>
           stepwind-cli recover-verify <recovery-file> <passphrase> [store-root]

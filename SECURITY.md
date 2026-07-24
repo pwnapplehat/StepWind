@@ -109,10 +109,12 @@ as above.
 
 ## Known limitations (honest)
 
-- **Machine-wide config isn't elevation-gated.** Toggling encryption, auto-update, or retention is
-  allowed for any connecting user, because the primary control surface (the tray GUI) is
-  unelevated. These change behavior but don't leak or destroy another user's data. Tightening this
-  behind a UAC-elevation flow is future work.
+- ~~Machine-wide config isn't elevation-gated.~~ **Lifted where it matters.** On a PC where more
+  than one real user owns protected history, machine-wide settings (encryption, index encryption,
+  auto-update, the flight recorder, `.gitignore` capture policy, storage limits, retention) can
+  only be changed by an administrator — apply them from an elevated terminal with
+  `stepwind-cli set-settings <json>`. On a single-user machine the sole user keeps the
+  frictionless unelevated flow, since they *are* the machine's owner in every meaningful sense.
 - ~~Same-name folders can't both be protected.~~ **Lifted.** Every protected root now has a
   stable store namespace (`RootIds` in settings): existing folders keep their leaf name — zero
   data migration — and a new folder whose name is taken (by a live root, a removed root, or dead

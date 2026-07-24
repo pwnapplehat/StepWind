@@ -49,6 +49,52 @@ public static class RootAccess
     }
 
     /// <summary>
+    /// Is this SID a REAL USER account (as opposed to a group like BUILTIN\Administrators that
+    /// NTFS-owner backfill can record)? Resolved via LookupAccountSid's SID_NAME_USE when the
+    /// account still exists; an unresolvable SID (deleted/foreign profile) counts as a user when
+    /// it has the S-1-5-21 machine/domain prefix with a non-well-known RID — erring on the side
+    /// of treating a machine as shared. Used to decide whether machine-wide settings changes
+    /// need an administrator (only meaningful when more than one real human owns history here).
+    /// </summary>
+    public static bool IsRealUserSid(string sidValue)
+    {
+        try
+        {
+            var sid = new System.Security.Principal.SecurityIdentifier(sidValue);
+            byte[] bytes = new byte[sid.BinaryLength];
+            sid.GetBinaryForm(bytes, 0);
+
+            var name = new System.Text.StringBuilder(256);
+            var domain = new System.Text.StringBuilder(256);
+            uint cchName = 256, cchDomain = 256;
+            if (LookupAccountSid(null, bytes, name, ref cchName, domain, ref cchDomain, out int use))
+            {
+                return use == 1; // SidTypeUser
+            }
+
+            // Unresolvable: deleted local account or a user from another machine/domain.
+            if (!sidValue.StartsWith("S-1-5-21-", StringComparison.Ordinal))
+            {
+                return false; // service/builtin/etc. — never a human
+            }
+
+            int lastDash = sidValue.LastIndexOf('-');
+            return int.TryParse(sidValue[(lastDash + 1)..], out int rid) && rid >= 1000;
+        }
+        catch (Exception)
+        {
+            return false; // malformed SID string — never treat garbage as a human
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("advapi32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern bool LookupAccountSid(
+        string? systemName, byte[] sid,
+        System.Text.StringBuilder name, ref uint cchName,
+        System.Text.StringBuilder referencedDomainName, ref uint cchReferencedDomainName,
+        out int use);
+
+    /// <summary>
     /// True if the caller's own token can enumerate <paramref name="directory"/>. Runs the check
     /// UNDER the caller's identity (impersonation) so it reflects the caller's real rights, not
     /// the SYSTEM service's. In-process trusted callers (tests/CLI) short-circuit to true.
