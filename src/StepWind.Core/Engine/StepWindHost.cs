@@ -66,6 +66,7 @@ public sealed class StepWindHost : IDisposable
             StartReEncode();
         }
 
+        EnsureRootIds(); // stable namespaces BEFORE the watch engine maps any path into the store
         _watch = BuildWatch();
         BackfillRootOwners();
 
@@ -226,8 +227,8 @@ public sealed class StepWindHost : IDisposable
     {
         foreach (string root in _settings.WatchedFolders)
         {
-            string leaf = System.IO.Path.GetFileName(root) ?? root;
-            if (_settings.RootOwners.ContainsKey(leaf))
+            string ns = NamespaceOf(root);
+            if (_settings.RootOwners.ContainsKey(ns))
             {
                 continue;
             }
@@ -249,7 +250,7 @@ public sealed class StepWindHost : IDisposable
 
             lock (_ownersLock)
             {
-                _settings.RootOwners[leaf] = owners;
+                _settings.RootOwners[ns] = owners;
             }
         }
     }
@@ -263,9 +264,18 @@ public sealed class StepWindHost : IDisposable
             exclusions.ExcludePrefix(prefix);
         }
 
+        // Build the root → namespace map through NamespaceOf so every folder (including one just
+        // added via settings) has a stable id by the time the engine maps its first path.
+        var namespaces = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string root in _settings.WatchedFolders)
+        {
+            namespaces[root] = NamespaceOf(root);
+        }
+
         return new WatchEngine(_store, exclusions, _settings.WatchedFolders, _log,
             canCapture: () => !_storageState.Paused && !_relocating,
-            respectGitIgnore: () => _settings.RespectGitIgnore);
+            respectGitIgnore: () => _settings.RespectGitIgnore,
+            rootNamespaces: namespaces);
     }
 
     /// <summary>
@@ -316,16 +326,99 @@ public sealed class StepWindHost : IDisposable
     private static IpcResponse? RequirePrivilege(CallerContext caller) =>
         caller.IsPrivileged ? null : IpcResponse.Fail("This action requires an administrator.");
 
-    // ── authorization: who may see/act on which protected root ──────────────────────────────
-    // A stored relative path's FIRST SEGMENT is its root namespace (folder leaf). Ownership is
-    // recorded per segment; the service maps a segment back to its live folder path so the
+    // ── root namespaces: stable per-root store ids ───────────────────────────────────────────
+    // A stored relative path's FIRST SEGMENT is its root namespace. Historically that was the
+    // folder leaf ("Documents"), which made two same-named folders impossible to protect at
+    // once. Namespaces are now assigned per root and remembered in settings: existing roots keep
+    // their leaf (zero data migration), and a new root whose leaf is taken — by a live root, a
+    // removed root's mapping, or dead history in the store — gets a deterministic "leaf~hash8".
+    // Ownership is recorded per namespace; a namespace maps back to its live folder path so the
     // "can the caller actually read this folder" safety net can run.
+
+    /// <summary>The store namespace for a protected root (assigning one if it's new).</summary>
+    private string NamespaceOf(string root)
+    {
+        if (_settings.RootIds.TryGetValue(root, out string? ns))
+        {
+            return ns;
+        }
+
+        return EnsureRootId(root);
+    }
+
+    /// <summary>
+    /// Assigns namespaces to every watched folder that lacks one. This is the STARTUP/UPGRADE
+    /// pass, so it lets a folder CLAIM a store segment matching its own leaf: pre-RootIds
+    /// installs stored that folder's history under exactly that segment, and refusing it here
+    /// would orphan every existing user's history on upgrade. (Two watched folders can't have
+    /// shared a leaf before RootIds existed — the old code refused the second one — so the claim
+    /// is unambiguous; the first mapped folder wins and any later one is suffixed via Values.)
+    /// </summary>
+    private void EnsureRootIds()
+    {
+        bool changed = false;
+        foreach (string root in _settings.WatchedFolders)
+        {
+            if (!_settings.RootIds.ContainsKey(root))
+            {
+                EnsureRootId(root, saveSettings: false, claimStoreSegments: true);
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            _settings.Save();
+        }
+    }
+
+    private string EnsureRootId(string root, bool saveSettings = true, bool claimStoreSegments = false)
+    {
+        lock (_ownersLock)
+        {
+            if (_settings.RootIds.TryGetValue(root, out string? existing))
+            {
+                return existing;
+            }
+
+            // Taken namespaces: every mapped id (live or kept-after-removal). For a folder added
+            // ONLINE (post-upgrade), first segments already present in the store are also taken —
+            // dead history must never be silently adopted by an unrelated folder that happens to
+            // share its name. The startup pass claims instead (see EnsureRootIds).
+            var taken = new HashSet<string>(_settings.RootIds.Values, StringComparer.OrdinalIgnoreCase);
+            if (!claimStoreSegments)
+            {
+                taken.UnionWith(_store.Log.DistinctRootSegments());
+            }
+
+            string leaf = System.IO.Path.GetFileName(root.TrimEnd(System.IO.Path.DirectorySeparatorChar)) is { Length: > 0 } l ? l : "root";
+            string ns = leaf;
+            if (taken.Contains(ns))
+            {
+                // Deterministic, path-derived suffix — stable across restarts and reinstalls.
+                string hex = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(root.ToLowerInvariant()))).ToLowerInvariant();
+                for (int len = 8; taken.Contains(ns) && len <= hex.Length; len += 4)
+                {
+                    ns = $"{leaf}~{hex[..len]}";
+                }
+            }
+
+            _settings.RootIds[root] = ns;
+            if (saveSettings)
+            {
+                _settings.Save();
+            }
+
+            return ns;
+        }
+    }
 
     private string? RootPathForSegment(string firstSegment)
     {
         foreach (string root in _settings.WatchedFolders)
         {
-            if (string.Equals(System.IO.Path.GetFileName(root), firstSegment, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(NamespaceOf(root), firstSegment, StringComparison.OrdinalIgnoreCase))
             {
                 return root;
             }
@@ -440,7 +533,7 @@ public sealed class StepWindHost : IDisposable
         }
 
         return [.. _settings.WatchedFolders.Where(root =>
-            RootAccess.CanAccess(caller, OwnersSnapshot(System.IO.Path.GetFileName(root) ?? root), root))];
+            RootAccess.CanAccess(caller, OwnersSnapshot(NamespaceOf(root)), root))];
     }
 
     private static long SafeFileLength(string path)
@@ -816,13 +909,14 @@ public sealed class StepWindHost : IDisposable
     }
 
     /// <summary>
-    /// Guards a watched-folder change against privilege escalation and namespace collision:
+    /// Guards a watched-folder change against privilege escalation:
     ///  • a non-privileged caller may only ADD a folder its own token can read (else it could
     ///    use the SYSTEM service to capture — then read — files it has no rights to);
     ///  • a non-privileged caller may only REMOVE a folder it owns (no un-protecting someone
-    ///    else's folder);
-    ///  • no ADD may collide on the store namespace leaf with a kept folder at a different path
-    ///    (two "Documents" from different drives would merge different files under one history).
+    ///    else's folder).
+    /// Same-name folders are NOT refused anymore: stable per-root namespaces (see
+    /// <see cref="EnsureRootId"/>) give a colliding leaf its own store segment, so two
+    /// "Documents" from different drives keep fully separate histories.
     /// Returns a failure response to reject the change, or null to allow it.
     /// </summary>
     private IpcResponse? AuthorizeFolderChange(CallerContext caller, List<string> oldFolders, List<string> newFolders)
@@ -832,19 +926,6 @@ public sealed class StepWindHost : IDisposable
 
         foreach (string added in newFolders.Where(f => !oldSet.Contains(f)))
         {
-            string leaf = System.IO.Path.GetFileName(added) ?? added;
-
-            // Collision with a KEPT folder at a different path.
-            string? clash = newFolders.FirstOrDefault(f =>
-                !f.Equals(added, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(System.IO.Path.GetFileName(f), leaf, StringComparison.OrdinalIgnoreCase));
-            if (clash is not null)
-            {
-                return IpcResponse.Fail(
-                    $"Can't protect '{added}': another protected folder is also named '{leaf}' ('{clash}'). " +
-                    "Two folders with the same name would share one history — rename one, or protect a parent folder.");
-            }
-
             if (!caller.IsPrivileged && !RootAccess.CallerCanReadDirectory(caller, added))
             {
                 return IpcResponse.Fail($"Can't protect '{added}': you don't have permission to read that folder.");
@@ -855,8 +936,7 @@ public sealed class StepWindHost : IDisposable
         {
             foreach (string removed in oldFolders.Where(f => !newSet.Contains(f)))
             {
-                string leaf = System.IO.Path.GetFileName(removed) ?? removed;
-                if (!RootAccess.CanAccess(caller, OwnersSnapshot(leaf), removed))
+                if (!RootAccess.CanAccess(caller, OwnersSnapshot(NamespaceOf(removed)), removed))
                 {
                     return IpcResponse.Fail($"Can't stop protecting '{removed}': it belongs to another user.");
                 }
@@ -875,15 +955,15 @@ public sealed class StepWindHost : IDisposable
         }
 
         var oldSet = new HashSet<string>(oldFolders, StringComparer.OrdinalIgnoreCase);
-        lock (_ownersLock)
+        foreach (string added in newFolders.Where(f => !oldSet.Contains(f)))
         {
-            foreach (string added in newFolders.Where(f => !oldSet.Contains(f)))
+            string ns = NamespaceOf(added); // assigns a stable namespace on first sight (takes _ownersLock itself)
+            lock (_ownersLock)
             {
-                string leaf = System.IO.Path.GetFileName(added) ?? added;
-                if (!_settings.RootOwners.TryGetValue(leaf, out List<string>? owners))
+                if (!_settings.RootOwners.TryGetValue(ns, out List<string>? owners))
                 {
                     owners = [];
-                    _settings.RootOwners[leaf] = owners;
+                    _settings.RootOwners[ns] = owners;
                 }
 
                 if (!owners.Contains(sid, StringComparer.OrdinalIgnoreCase))
@@ -985,7 +1065,7 @@ public sealed class StepWindHost : IDisposable
             .OrderByDescending(kv => kv.Value.Last)
             .Select(kv => new BrowseEntry
             {
-                Name = LeafName(kv.Key),
+                Name = depth == 0 ? DisplayNameForSegment(kv.Key) : LeafName(kv.Key),
                 RelativePath = kv.Key,
                 IsFolder = true,
                 VersionCount = kv.Value.Versions,
@@ -994,6 +1074,29 @@ public sealed class StepWindHost : IDisposable
             }));
         result.AddRange(directFiles.OrderByDescending(f => f.LastCapturedUtc));
         return [.. result.Take(cap)];
+    }
+
+    /// <summary>
+    /// Human name for a TOP-LEVEL store segment. For a suffixed namespace ("Documents~a1b2c3d4")
+    /// the real folder's leaf is shown with its parent for disambiguation — "Documents (D:\Backup)"
+    /// — so two same-named roots stay tellable-apart in every browse UI. Dead segments (folder no
+    /// longer protected) fall back to the raw segment.
+    /// </summary>
+    private string DisplayNameForSegment(string segment)
+    {
+        if (RootPathForSegment(segment) is { } root)
+        {
+            string leaf = System.IO.Path.GetFileName(root.TrimEnd(System.IO.Path.DirectorySeparatorChar)) is { Length: > 0 } l ? l : root;
+            if (!string.Equals(segment, leaf, StringComparison.OrdinalIgnoreCase))
+            {
+                string? parent = System.IO.Path.GetDirectoryName(root.TrimEnd(System.IO.Path.DirectorySeparatorChar));
+                return string.IsNullOrEmpty(parent) ? leaf : $"{leaf} ({parent})";
+            }
+
+            return leaf;
+        }
+
+        return segment;
     }
 
     private static string LeafName(string relativePath)
@@ -1354,16 +1457,13 @@ public sealed class StepWindHost : IDisposable
 
     private string ResolveOriginalPath(string relativePath, CallerContext caller)
     {
-        // relativePath is "<watchedFolderName>/rest…"; map back to the actual root.
+        // relativePath is "<rootNamespace>/rest…"; map back to the actual root.
         int slash = relativePath.IndexOf('/');
         string firstSeg = slash < 0 ? relativePath : relativePath[..slash];
         string rest = slash < 0 ? "" : relativePath[(slash + 1)..];
-        foreach (string root in _settings.WatchedFolders)
+        if (RootPathForSegment(firstSeg) is { } rootPath)
         {
-            if (string.Equals(System.IO.Path.GetFileName(root), firstSeg, StringComparison.OrdinalIgnoreCase))
-            {
-                return System.IO.Path.Combine(root, rest.Replace('/', System.IO.Path.DirectorySeparatorChar));
-            }
+            return System.IO.Path.Combine(rootPath, rest.Replace('/', System.IO.Path.DirectorySeparatorChar));
         }
 
         // The folder is no longer protected (or was renamed), so its original root is unknown.

@@ -113,9 +113,12 @@ as above.
   allowed for any connecting user, because the primary control surface (the tray GUI) is
   unelevated. These change behavior but don't leak or destroy another user's data. Tightening this
   behind a UAC-elevation flow is future work.
-- **Same-name folders can't both be protected.** Two protected folders that share a leaf name
-  ("Documents") would share one history namespace; adding the second is refused rather than
-  silently merging them. A future stable per-root id will lift this.
+- ~~Same-name folders can't both be protected.~~ **Lifted.** Every protected root now has a
+  stable store namespace (`RootIds` in settings): existing folders keep their leaf name — zero
+  data migration — and a new folder whose name is taken (by a live root, a removed root, or dead
+  history in the store) gets a deterministic `leaf~hash` id. Two "Documents" folders keep fully
+  separate histories and owner sets, and a newly protected folder can never silently adopt a
+  removed folder's timeline.
 - **Metadata encryption is opt-in.** File paths, names, and timestamps in the version index are
   plaintext by default even when blob content is encrypted; enable "Also encrypt the index" to
   cover them too (see "The store").

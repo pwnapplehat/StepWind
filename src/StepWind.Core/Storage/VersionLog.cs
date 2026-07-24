@@ -74,6 +74,27 @@ public sealed class VersionLog
         get { lock (_appendLock) { return [.. _versions]; } }
     }
 
+    /// <summary>
+    /// Every distinct FIRST path segment present in the store (the root namespaces), including
+    /// ones whose folders are no longer protected. Used when assigning a namespace to a newly
+    /// protected folder: a new root must never silently adopt a segment that dead history already
+    /// occupies (that would merge two different folders' files into one timeline).
+    /// </summary>
+    public IReadOnlyCollection<string> DistinctRootSegments()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        lock (_appendLock)
+        {
+            foreach (FileVersion v in _versions)
+            {
+                int slash = v.RelativePath.IndexOf('/');
+                set.Add(slash < 0 ? v.RelativePath : v.RelativePath[..slash]);
+            }
+        }
+
+        return set;
+    }
+
     /// <summary>All versions of one file, oldest first (snapshotted under the lock).</summary>
     public IReadOnlyList<FileVersion> History(string relativePath)
     {

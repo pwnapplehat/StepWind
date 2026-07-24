@@ -84,6 +84,17 @@ public sealed class StepWindSettings
     /// </summary>
     public bool RespectGitIgnore { get; set; }
 
+    /// <summary>
+    /// Stable per-root store namespaces: absolute folder path → the first path segment its
+    /// versions are stored under. Existing roots keep their folder leaf ("Documents") so no data
+    /// ever migrates; a NEW root whose leaf is already taken (by a live root, a removed root, or
+    /// dead history in the store) gets a deterministic "leaf~hash8" id instead — which is how two
+    /// folders that are both named "Documents" can be protected side by side without merging
+    /// histories. Entries are kept after a folder is un-protected so re-adding the same path
+    /// re-attaches its old history.
+    /// </summary>
+    public Dictionary<string, string> RootIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public static string DefaultRoot =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StepWind");
 

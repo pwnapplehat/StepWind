@@ -20,6 +20,7 @@ public class AuthorizationTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "stepwind-authz", Guid.NewGuid().ToString("N"));
     private readonly string _watch;
+    private readonly StepWindSettings _settings;
     private readonly StepWindHost _host;
     private readonly string _mySid;
 
@@ -30,7 +31,7 @@ public class AuthorizationTests : IDisposable
         _mySid = WindowsIdentity.GetCurrent().User!.Value;
         _watch = Path.Combine(_root, "Docs");
         Directory.CreateDirectory(_watch);
-        var settings = new StepWindSettings
+        _settings = new StepWindSettings
         {
             StoreRoot = Path.Combine(_root, "store"),
             WatchedFolders = [_watch],
@@ -38,7 +39,7 @@ public class AuthorizationTests : IDisposable
             // "Docs" is owned by the current test user (me); a stranger owns nothing here.
             RootOwners = new(StringComparer.OrdinalIgnoreCase) { ["Docs"] = [_mySid] },
         };
-        _host = new StepWindHost(settings, new GzipBlobCodec());
+        _host = new StepWindHost(_settings, new GzipBlobCodec());
     }
 
     // Non-privileged callers with a real SID but no live pipe handle (so the "can you read the
@@ -157,10 +158,12 @@ public class AuthorizationTests : IDisposable
     }
 
     [Fact]
-    public void Adding_a_folder_that_collides_on_leaf_name_is_refused()
+    public void Adding_a_folder_that_collides_on_leaf_name_gets_its_own_namespace()
     {
-        // Two protected folders sharing a leaf would merge different files under one history —
-        // the collision the audit flagged as a wrong-tree restore/purge hazard. Refuse it.
+        // Two protected folders sharing a leaf used to be REFUSED (they'd have merged under one
+        // history namespace — a wrong-tree restore/purge hazard). Stable per-root ids lift that:
+        // the add now succeeds and the newcomer gets a distinct suffixed namespace, so nothing
+        // can merge. Full behavioral coverage lives in RootNamespaceTests.
         string otherDocs = Path.Combine(_root, "other", "Docs");
         Directory.CreateDirectory(otherDocs);
 
@@ -170,8 +173,12 @@ public class AuthorizationTests : IDisposable
             Arg1 = JsonSerializer.Serialize(new { WatchedFolders = new[] { _watch, otherDocs } }),
         }, Admin);
 
-        Assert.False(resp.Ok);
-        Assert.Contains("same name", resp.Error!, StringComparison.OrdinalIgnoreCase);
+        Assert.True(resp.Ok, resp.Error);
+        Assert.Equal(2, _settings.WatchedFolders.Count);
+        string nsExisting = _settings.RootIds[_watch];
+        string nsAdded = _settings.RootIds[otherDocs];
+        Assert.NotEqual(nsExisting, nsAdded);                     // separate histories guaranteed
+        Assert.StartsWith("Docs", nsAdded, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

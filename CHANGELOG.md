@@ -27,6 +27,11 @@ Initial release — an undo button for your whole PC (and a safety net for AI co
   after, and restore on regret, so the MCP tools get used at the right moments. Other tools can
   copy the skill from the manual-setup card. Removed cleanly on disconnect; never touches any
   other skill.
+- **Same-name folders.** Two protected folders may share a name ("Documents" on two drives) and
+  keep fully separate histories, via stable per-root namespaces: existing folders keep their
+  current namespace (no data migration), a colliding newcomer gets a deterministic suffixed id,
+  dead history can never be silently adopted by an unrelated same-named folder, and re-protecting
+  the same path re-attaches its old history.
 
 - **Trustworthy updates without a paid certificate.** A verified-but-unsigned release is no
   longer run silently as SYSTEM — it's downloaded, checksum-verified, ACL-locked, and offered as a

@@ -75,15 +75,24 @@ public sealed class WatchEngine : IDisposable
     private readonly Func<bool>? _respectGitIgnore;
     private readonly ConcurrentDictionary<string, GitIgnoreMatcher?> _gitIgnore = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Root path → store namespace (first stored path segment). Defaults to the folder leaf when
+    /// a root has no entry, which is also the pre-RootIds behavior — so tests and old callers are
+    /// unchanged. Supplied by the host from <see cref="StepWindSettings.RootIds"/>, which is what
+    /// lets two protected folders share a leaf name without sharing a history namespace.
+    /// </summary>
+    private readonly IReadOnlyDictionary<string, string>? _rootNamespaces;
+
     public WatchEngine(VersionStore store, PathExclusions exclusions, IEnumerable<string> roots,
         Action<string>? log = null, TimeSpan? quietPeriod = null, Func<bool>? canCapture = null,
-        Func<bool>? respectGitIgnore = null)
+        Func<bool>? respectGitIgnore = null, IReadOnlyDictionary<string, string>? rootNamespaces = null)
     {
         _store = store;
         _exclusions = exclusions;
         _log = log;
         _canCapture = canCapture;
         _respectGitIgnore = respectGitIgnore;
+        _rootNamespaces = rootNamespaces;
         _roots = [.. roots.Where(Directory.Exists)];
         _debouncer = new ChangeDebouncer { QuietPeriod = quietPeriod ?? TimeSpan.FromSeconds(2) };
 
@@ -491,8 +500,10 @@ public sealed class WatchEngine : IDisposable
         {
             if (fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             {
-                string name = Path.GetFileName(root);
-                return (name + "/" + Path.GetRelativePath(root, fullPath)).Replace('\\', '/');
+                string ns = _rootNamespaces is not null && _rootNamespaces.TryGetValue(root, out string? mapped)
+                    ? mapped
+                    : Path.GetFileName(root);
+                return (ns + "/" + Path.GetRelativePath(root, fullPath)).Replace('\\', '/');
             }
         }
 

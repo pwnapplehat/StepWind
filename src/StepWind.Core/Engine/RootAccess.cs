@@ -16,9 +16,10 @@ namespace StepWind.Core.Engine;
 ///      open yourself (never an escalation), so a stale/missing owner record can't lock you out;
 ///   4. otherwise denied.
 ///
-/// The folder-leaf ("Documents") is the store namespace segment. Adding a second protected
-/// folder that shares a leaf with an existing one is refused elsewhere, so a leaf maps to a
-/// single owner set with no ambiguity.
+/// Each protected root has a STABLE store namespace segment (see StepWindSettings.RootIds):
+/// the folder leaf for the common case, or a deterministic "leaf~hash" when two roots share a
+/// name. A namespace therefore maps to a single owner set with no ambiguity — even when two
+/// protected folders are both called "Documents".
 /// </summary>
 [SupportedOSPlatform("windows")]
 public static class RootAccess
