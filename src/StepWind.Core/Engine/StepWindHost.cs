@@ -37,13 +37,28 @@ public sealed class StepWindHost : IDisposable
     private volatile StorageState _storageState = new(false, null, -1, 0, 0, 0);
     private volatile Updates.PendingUpdate? _pendingUpdate;
     private WatchEngine _watch;
+    private readonly Enterprise.MachinePolicy _policy;
+    private readonly Enterprise.IAuditSink _audit;
 
-    public StepWindHost(StepWindSettings settings, IBlobCodec codec, Action<string>? log = null)
+    public StepWindHost(StepWindSettings settings, IBlobCodec codec, Action<string>? log = null,
+        Enterprise.MachinePolicy? policy = null, Enterprise.IAuditSink? audit = null)
     {
         _settings = settings;
         _log = log;
         _codec = codec;
+        _policy = policy ?? Enterprise.MachinePolicy.None;
+        _audit = audit ?? Enterprise.NullAuditSink.Instance;
         _migCodec = codec as MigratingBlobCodec; // live encryption toggling needs this codec
+
+        // Enterprise policy wins before anything reads settings: overlay every admin-enforced value
+        // (and force-protect mandatory folders) so the store, watch engine, and schedules all run
+        // on the managed configuration. On an unmanaged machine this is a no-op.
+        if (_policy.Enforce(_settings))
+        {
+            _settings.Save();
+            _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.PolicyEnforced, "SYSTEM",
+                "Applied machine policy at startup", Success: true));
+        }
 
         // The store holds copies of the user's documents under %ProgramData% — lock it to
         // SYSTEM + Administrators before writing anything (no-op for dev/console runs).
@@ -114,7 +129,15 @@ public sealed class StepWindHost : IDisposable
     /// Records a verified-but-unsigned update the service has staged, so the GUI can offer a
     /// one-click install (with normal UAC). Called by the service's update loop.
     /// </summary>
-    public void SetPendingUpdate(Updates.PendingUpdate? update) => _pendingUpdate = update;
+    public void SetPendingUpdate(Updates.PendingUpdate? update)
+    {
+        _pendingUpdate = update;
+        if (update is not null)
+        {
+            _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.UpdateStaged, "SYSTEM",
+                $"update {update.Version} downloaded + verified, staged for one-click install", Success: true));
+        }
+    }
 
     /// <summary>Recomputes the storage pause state from current free space + store size.</summary>
     private void RefreshStorageState()
@@ -739,6 +762,11 @@ public sealed class StepWindHost : IDisposable
         RetentionDailyDays = _settings.Retention.DailyDays,
         RetentionMaxAgeDays = _settings.Retention.MaxAgeDays,
         RetentionMaxVersionsPerFile = _settings.Retention.MaxVersionsPerFile,
+        // Enterprise: tells the GUI which settings are org-managed (show them read-only with a
+        // "managed by your organization" note) and whether the user may change protected folders.
+        Managed = _policy.Managed,
+        ManagedKeys = _policy.LockedKeys.ToArray(),
+        AllowUserFolderChanges = _policy.AllowUserFolderChanges,
     };
 
     /// <summary>Editable slice of settings the GUI can push (WatchedFolders is the main one).</summary>
@@ -769,9 +797,20 @@ public sealed class StepWindHost : IDisposable
             return IpcResponse.Fail("bad settings payload");
         }
 
+        // Enterprise policy is the strongest gate — it binds even a local administrator, because
+        // only the org's Group Policy/MDM (writing HKLM\SOFTWARE\Policies) may change a managed
+        // setting. Checked before ownership, and audited.
+        IpcResponse? policyDenied = EnforcePolicyLocks(caller, patch);
+        if (policyDenied is not null)
+        {
+            return policyDenied;
+        }
+
         IpcResponse? machineWideDenied = AuthorizeMachineWideChange(caller, patch);
         if (machineWideDenied is not null)
         {
+            _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.SettingsChangeDeniedByAuthorization,
+                Actor(caller), "Machine-wide settings change refused (another user owns history)", Success: false));
             return machineWideDenied;
         }
 
@@ -793,6 +832,8 @@ public sealed class StepWindHost : IDisposable
 
             _settings.EncryptionEnabled = enc;
             _log?.Invoke($"encryption {(enc ? "enabled" : "disabled")} — re-encoding existing history in the background");
+            _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.EncryptionToggled, Actor(caller),
+                $"store encryption {(enc ? "enabled" : "disabled")}", Success: true));
             StartReEncode();
         }
 
@@ -920,6 +961,9 @@ public sealed class StepWindHost : IDisposable
 
         _settings.Save();
 
+        _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.SettingsChanged,
+            Actor(caller), DescribePatch(patch), Success: true));
+
         if (foldersChanged)
         {
             WatchEngine rebuilt;
@@ -943,6 +987,73 @@ public sealed class StepWindHost : IDisposable
         }
 
         return Ok(BuildSettings());
+    }
+
+    /// <summary>The acting user's identity for an audit record (SYSTEM/in-process trusted callers included).</summary>
+    private static string Actor(CallerContext caller)
+        => !string.IsNullOrEmpty(caller.UserName) ? caller.UserName!
+            : !string.IsNullOrEmpty(caller.UserSid) ? caller.UserSid!
+            : caller.FullTrust ? "SYSTEM/in-process" : "(unknown)";
+
+    /// <summary>Human-readable summary of which settings a patch changed, for the audit trail (no secrets).</summary>
+    private static string DescribePatch(SettingsPatch p)
+    {
+        var parts = new List<string>();
+        if (p.WatchedFolders is not null) parts.Add($"WatchedFolders={p.WatchedFolders.Count}");
+        if (p.ExcludedPrefixes is not null) parts.Add($"ExcludedPrefixes={p.ExcludedPrefixes.Count}");
+        if (p.EncryptionEnabled is bool e) parts.Add($"EncryptionEnabled={e}");
+        if (p.EncryptIndex is bool ei) parts.Add($"EncryptIndex={ei}");
+        if (p.AutoUpdateEnabled is bool au) parts.Add($"AutoUpdateEnabled={au}");
+        if (p.FlightRecorderEnabled is bool fr) parts.Add($"FlightRecorderEnabled={fr}");
+        if (p.RespectGitIgnore is bool rg) parts.Add($"RespectGitIgnore={rg}");
+        if (p.TimelineProtectedOnly is bool tp) parts.Add($"TimelineProtectedOnly={tp}");
+        if (p.MinFreeDiskBytes is long mf) parts.Add($"MinFreeDiskBytes={mf}");
+        if (p.MaxStoreBytes is long ms) parts.Add($"MaxStoreBytes={ms}");
+        if (p.RetentionKeepAllHours is int ka) parts.Add($"RetentionKeepAllHours={ka}");
+        if (p.RetentionHourlyDays is int hd) parts.Add($"RetentionHourlyDays={hd}");
+        if (p.RetentionDailyDays is int dd) parts.Add($"RetentionDailyDays={dd}");
+        if (p.RetentionMaxAgeDays is int ma) parts.Add($"RetentionMaxAgeDays={ma}");
+        if (p.RetentionMaxVersionsPerFile is int mv) parts.Add($"RetentionMaxVersionsPerFile={mv}");
+        return parts.Count == 0 ? "(no changes)" : string.Join(", ", parts);
+    }
+
+    /// <summary>
+    /// Refuses any patch that would change a policy-LOCKED setting — binding every caller,
+    /// administrators included, because only the org's Group Policy/MDM may change a managed
+    /// setting. Only an actual change is refused (echoing the enforced value back is fine, since
+    /// the GUI patches whole sections). Returns a failure response to reject, or null to allow.
+    /// </summary>
+    private IpcResponse? EnforcePolicyLocks(CallerContext caller, SettingsPatch patch)
+    {
+        if (!_policy.Managed)
+        {
+            return null;
+        }
+
+        bool Changes(string key, bool differs) => _policy.Locks(key) && differs;
+
+        bool blocked =
+            Changes("EncryptionEnabled", patch.EncryptionEnabled is bool e && e != _settings.EncryptionEnabled) ||
+            Changes("EncryptIndex", patch.EncryptIndex is bool ei && ei != _settings.EncryptIndex) ||
+            Changes("AutoUpdateEnabled", patch.AutoUpdateEnabled is bool au && au != _settings.AutoUpdateEnabled) ||
+            Changes("FlightRecorderEnabled", patch.FlightRecorderEnabled is bool fr && fr != _settings.FlightRecorderEnabled) ||
+            Changes("RespectGitIgnore", patch.RespectGitIgnore is bool rg && rg != _settings.RespectGitIgnore) ||
+            Changes("MinFreeDiskBytes", patch.MinFreeDiskBytes is long mf && mf != _settings.MinFreeDiskBytes) ||
+            Changes("MaxStoreBytes", patch.MaxStoreBytes is long ms && ms != _settings.MaxStoreBytes) ||
+            Changes("RetentionKeepAllHours", patch.RetentionKeepAllHours is int ka && ka != _settings.Retention.KeepAllHours) ||
+            Changes("RetentionHourlyDays", patch.RetentionHourlyDays is int hd && hd != _settings.Retention.HourlyDays) ||
+            Changes("RetentionDailyDays", patch.RetentionDailyDays is int dd && dd != _settings.Retention.DailyDays) ||
+            Changes("RetentionMaxAgeDays", patch.RetentionMaxAgeDays is int ma && ma != _settings.Retention.MaxAgeDays) ||
+            Changes("RetentionMaxVersionsPerFile", patch.RetentionMaxVersionsPerFile is int mv && mv != _settings.Retention.MaxVersionsPerFile);
+
+        if (!blocked)
+        {
+            return null;
+        }
+
+        _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.SettingsChangeDeniedByPolicy,
+            Actor(caller), "Attempt to change a setting locked by your organization's policy", Success: false));
+        return IpcResponse.Fail("This setting is managed by your organization and can't be changed here.");
     }
 
     private IpcResponse GetHistory(string pathOrRelative, CallerContext caller)
@@ -1045,6 +1156,23 @@ public sealed class StepWindHost : IDisposable
     {
         var oldSet = new HashSet<string>(oldFolders, StringComparer.OrdinalIgnoreCase);
         var newSet = new HashSet<string>(newFolders, StringComparer.OrdinalIgnoreCase);
+
+        // Enterprise: the org can forbid users from changing the folder set at all, and can force
+        // certain folders to always be protected. Both bind non-admin callers; admins/SYSTEM (and
+        // the org's own policy-driven changes) are not blocked here.
+        if (!caller.IsPrivileged && !_policy.AllowUserFolderChanges
+            && !newSet.SetEquals(oldSet))
+        {
+            return IpcResponse.Fail("Protected folders are managed by your organization and can't be changed here.");
+        }
+
+        foreach (string removed in oldFolders.Where(f => !newSet.Contains(f)))
+        {
+            if (_policy.IsMandatoryFolder(removed))
+            {
+                return IpcResponse.Fail($"'{removed}' is required by your organization's policy and can't be un-protected.");
+            }
+        }
 
         foreach (string added in newFolders.Where(f => !oldSet.Contains(f)))
         {
@@ -1485,6 +1613,8 @@ public sealed class StepWindHost : IDisposable
         }
 
         ReverseResult r = OperationReverser.Reverse(lookup.Op, _fs);
+        _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.OperationReversed, Actor(caller),
+            $"{lookup.Op.Kind} of '{lookup.Op.Name}' -> {(r.Success ? "restored" : "failed")}", r.Success));
         return r.Success ? IpcResponse.Success(JsonSerializer.Serialize(new { r.Message, r.RestoredPath }))
                          : IpcResponse.Fail(r.Message);
     }
@@ -1575,6 +1705,8 @@ public sealed class StepWindHost : IDisposable
             ? destinationOverride
             : ResolveOriginalPath(rel, caller);
         string written = _store.RestoreToSafePath(version, dest);
+        _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.VersionRestored, Actor(caller),
+            $"'{rel}' restored to '{written}'", Success: true));
         return IpcResponse.Success(JsonSerializer.Serialize(new { RestoredPath = written }));
     }
 
@@ -1753,6 +1885,8 @@ public sealed class StepWindHost : IDisposable
             }
 
             _log?.Invoke($"store relocated to {newRoot}; previous store left intact at {oldRoot}");
+            _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.StoreRelocated, "admin/SYSTEM",
+                $"history store moved from '{oldRoot}' to '{newRoot}' ({report.TotalVersions} versions)", Success: true));
             return Ok(new
             {
                 NewRoot = newRoot,
@@ -1883,6 +2017,8 @@ public sealed class StepWindHost : IDisposable
         });
 
         _log?.Invoke($"purge '{selector}': removed {removedVersions} version(s), swept {sweptBlobs} blob(s)");
+        _audit.Write(new Enterprise.AuditEvent(Enterprise.AuditAction.HistoryPurged, Actor(caller),
+            $"selector='{selector}', removed {removedVersions} version(s), freed {sweptBlobs} chunk(s)", Success: true));
         return IpcResponse.Success(JsonSerializer.Serialize(new { RemovedVersions = removedVersions, SweptBlobs = sweptBlobs }));
     }
 

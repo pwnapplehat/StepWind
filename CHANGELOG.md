@@ -113,6 +113,23 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
   encrypted history survives an OS reinstall. The store itself is ACL-locked to
   SYSTEM + Administrators.
 
+### Enterprise & managed fleets
+
+- **Central policy (Group Policy / MDM).** Administrators enforce settings via
+  `HKLM\SOFTWARE\Policies\StepWind` (ADMX/ADML template in `enterprise/policy/`): encryption,
+  index encryption, auto-update, the flight recorder, `.gitignore` policy, retention, storage
+  limits, mandatory always-protected folders, and whether users may change folders at all. An
+  enforced setting binds every caller — standard user *or* local administrator — because only the
+  org's policy may change it; in a managed fleet this makes machine-wide configuration central and
+  removes the shared-PC question. The tray app shows managed settings dimmed with a clear notice.
+- **Security audit trail.** Every security-relevant action — settings changes, purges, restores,
+  reversals, folder changes, encryption toggles, updates, and policy-denied attempts — is written
+  (naming the acting user, with stable Event IDs) to a dedicated `StepWind` Windows Event Log,
+  ready for Windows Event Forwarding or any SIEM/EDR. Nothing leaves the machine on its own.
+- **Fleet deployment.** Silent EXE install for Intune/ConfigMgr (`/VERYSILENT`), a documented
+  registry/ADMX policy reference, and a managed uninstall that preserves history by default. See
+  [`enterprise/README.md`](enterprise/README.md).
+
 ### Updates
 
 - **Fail-closed, verified, rollback-safe.** A release is downloaded into an ACL-locked staging
@@ -191,7 +208,7 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
 
 ---
 
-Verified for release: **284 unit tests** (chunking, store, retention, undo, authorization,
+Verified for release: **294 unit tests** (chunking, store, retention, undo, authorization,
 updates, IPC wire contract, root namespaces — timing-sensitive tests written deterministically);
 real-hardware elevated end-to-end runs through the production classes (reconstruct + reverse +
 version round-trip, including the marker-time delete path measured against the live NTFS

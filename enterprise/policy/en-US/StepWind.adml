@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources revision="1.0" schemaVersion="1.0">
+  <displayName>StepWind administrative template</displayName>
+  <description>Group Policy settings for the StepWind file-protection agent.</description>
+  <resources>
+    <stringTable>
+      <string id="Cat_StepWind">StepWind</string>
+      <string id="SUPPORTED_1_0">StepWind 1.0 or later</string>
+
+      <string id="EncryptionEnabled">Encrypt the history store at rest</string>
+      <string id="EncryptionEnabled_Help">Enforces whether StepWind encrypts the version-history store (AES-256-GCM, key sealed with machine DPAPI).
+
+Enabled: encryption is on and users cannot turn it off.
+Disabled: encryption is off and users cannot turn it on.
+Not Configured: the user chooses.</string>
+
+      <string id="EncryptIndex">Encrypt the history index (names, paths, dates)</string>
+      <string id="EncryptIndex_Help">Enforces whether StepWind also encrypts the version index metadata, not just file contents. Only meaningful when encryption is enabled.
+
+Not Configured: the user chooses.</string>
+
+      <string id="AutoUpdateEnabled">Automatic updates</string>
+      <string id="AutoUpdateEnabled_Help">Enforces whether the StepWind service checks for and applies updates.
+
+Disable this if your organization manages StepWind updates centrally (e.g. via Intune/SCCM).
+Not Configured: the user chooses.</string>
+
+      <string id="FlightRecorderEnabled">Whole-machine flight recorder</string>
+      <string id="FlightRecorderEnabled_Help">Enforces whether StepWind records the machine-wide operation timeline (moves/renames/deletes) used for one-click undo.
+
+Not Configured: the user chooses.</string>
+
+      <string id="RespectGitIgnore">Honor .gitignore in protected folders</string>
+      <string id="RespectGitIgnore_Help">Enforces whether files matched by a protected git repository's .gitignore are skipped for version history.
+
+Not Configured: the user chooses.</string>
+
+      <string id="AllowUserFolderChanges">Allow users to change protected folders</string>
+      <string id="AllowUserFolderChanges_Help">Controls whether standard users may add or remove protected folders.
+
+Enabled (or Not Configured): users may manage their own protected folders.
+Disabled: only administrators may change the protected-folder set. Combine with mandatory folders (MandatoryFolders REG_MULTI_SZ) to force a fixed set.</string>
+
+      <string id="AuditEnabled">Write the security audit log</string>
+      <string id="AuditEnabled_Help">Controls whether StepWind writes a security audit trail (settings changes, purges, restores, reversals, updates) to the "StepWind" Windows Event Log, which your SIEM/Windows Event Forwarding can collect.
+
+Enabled (or Not Configured): auditing is on.
+Disabled: auditing is off.</string>
+
+      <string id="Retention">History retention limits</string>
+      <string id="Retention_Help">Enforces StepWind's version-retention policy. Any field left blank is not enforced.
+
+Keep-all hours: keep every version within this many hours.
+Hourly days / Daily days: thin to one version per hour, then per day, for this many days.
+Max age days: hard cap; nothing older is kept.
+Max versions per file: hard cap on versions retained per file.</string>
+
+      <string id="StorageLimits">Storage limits (bytes)</string>
+      <string id="StorageLimits_Help">Enforces StepWind's disk-usage guards, in BYTES (leave blank to not enforce).
+
+Minimum free disk: pause capturing when the store drive has less than this many bytes free.
+Maximum store size: optional hard cap on the history store's own size (0 = unlimited).</string>
+    </stringTable>
+
+    <presentationTable>
+      <presentation id="Retention">
+        <decimalTextBox refId="RetentionKeepAllHours" defaultValue="24">Keep every version for (hours):</decimalTextBox>
+        <decimalTextBox refId="RetentionHourlyDays" defaultValue="7">Then one per hour for (days):</decimalTextBox>
+        <decimalTextBox refId="RetentionDailyDays" defaultValue="30">Then one per day for (days):</decimalTextBox>
+        <decimalTextBox refId="RetentionMaxAgeDays" defaultValue="365">Hard age cap (days):</decimalTextBox>
+        <decimalTextBox refId="RetentionMaxVersionsPerFile" defaultValue="100">Max versions per file:</decimalTextBox>
+      </presentation>
+      <presentation id="StorageLimits">
+        <textBox refId="MinFreeDiskBytes"><label>Minimum free disk (bytes):</label></textBox>
+        <textBox refId="MaxStoreBytes"><label>Maximum store size (bytes, 0 = unlimited):</label></textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

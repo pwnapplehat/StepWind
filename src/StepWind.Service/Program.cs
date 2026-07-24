@@ -1,5 +1,6 @@
 using System.Runtime.Versioning;
 using StepWind.Core.Engine;
+using StepWind.Core.Enterprise;
 using StepWind.Core.Ipc;
 using StepWind.Core.Storage;
 
@@ -41,6 +42,7 @@ public sealed class StepWindWorker : BackgroundService
     private StepWindHost? _host;
     private PipeServer? _pipe;
     private Mutex? _singleInstance;
+    private EventLogAuditSink? _audit;
 
     public StepWindWorker(ILogger<StepWindWorker> logger) => _logger = logger;
 
@@ -60,11 +62,25 @@ public sealed class StepWindWorker : BackgroundService
         StepWindSettings settings = StepWindSettings.Load();
         settings.Save(); // materialize defaults on first run
 
+        // Enterprise: read machine policy (HKLM\SOFTWARE\Policies\StepWind) and set up the audit
+        // trail. The SYSTEM service can create the Event Log source; on an unmanaged machine the
+        // policy is empty (no-op) and, if auditing is turned off by policy, the sink is a no-op.
+        MachinePolicy policy = MachinePolicy.FromRegistry();
+        IAuditSink audit = policy.AuditEnabled
+            ? (_audit = new EventLogAuditSink(msg => _logger.LogInformation("{Message}", msg)))
+            : NullAuditSink.Instance;
+        if (policy.Managed)
+        {
+            _logger.LogInformation("StepWind is under machine policy ({Count} setting(s) enforced).", policy.LockedKeys.Count);
+        }
+
         IBlobCodec codec = SelectCodec(settings);
-        _host = new StepWindHost(settings, codec, msg => _logger.LogInformation("{Message}", msg));
+        _host = new StepWindHost(settings, codec, msg => _logger.LogInformation("{Message}", msg), policy, audit);
         _pipe = new PipeServer((req, caller) => _host.Handle(req, caller), msg => _logger.LogWarning("{Message}", msg));
         _pipe.Start();
 
+        audit.Write(new AuditEvent(AuditAction.ServiceStarted, "SYSTEM",
+            $"StepWind service started; watching {settings.WatchedFolders.Count} folder(s)", Success: true));
         _logger.LogInformation("StepWind service started; watching {Count} folder(s).", settings.WatchedFolders.Count);
 
         // Always run the loop; it reads the LIVE setting each cycle. Starting it conditionally
@@ -136,8 +152,10 @@ public sealed class StepWindWorker : BackgroundService
 
     public override Task StopAsync(CancellationToken cancellationToken)
     {
+        _audit?.Write(new AuditEvent(AuditAction.ServiceStopped, "SYSTEM", "StepWind service stopping", Success: true));
         _pipe?.Dispose();
         _host?.Dispose();
+        _audit?.Dispose();
         _singleInstance?.Dispose();
         return base.StopAsync(cancellationToken);
     }

@@ -614,6 +614,7 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
   transition: transform 0.22s var(--ease), background 0.2s;
 }
 .switch.on { background: var(--indigo); border-color: transparent; }
+.switch.managed { opacity: 0.45; cursor: not-allowed; }
 .switch.on::after { transform: translateX(18px); background: #fff; }
 
 /* ═══════════════ Command palette ═══════════════ */

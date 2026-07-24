@@ -14,7 +14,7 @@ everyone, not just people who use git.
 
 Free · open source · 100% local · no cloud · no account · no telemetry
 
-**[stepwind.app](https://stepwind.app)** · [Releases](https://github.com/pwnapplehat/StepWind/releases/latest) · [Security model](SECURITY.md)
+**[stepwind.app](https://stepwind.app)** · [Releases](https://github.com/pwnapplehat/StepWind/releases/latest) · [Security model](SECURITY.md) · [Enterprise](enterprise/README.md)
 
 <img src="docs/screenshots/app.png" width="820" alt="StepWind timeline — a live, day-grouped feed of file operations with one-click undo"/>
 
@@ -172,7 +172,7 @@ tests/                 deterministic Core tests
 
 ## Verified
 
-- **284 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+- **294 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
   integrity, encryption round-trip & tamper rejection, DPAPI key stability, live encryption
   toggling (mixed-store reads, background re-encode convergence in both directions,
   interrupted-migration recovery, storage byte tracking, the IPC toggle end-to-end), USN

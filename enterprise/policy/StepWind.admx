@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  StepWind Group Policy administrative template.
+
+  Install: copy StepWind.admx to  C:\Windows\PolicyDefinitions\  (or the domain Central Store,
+  \\<domain>\SYSVOL\<domain>\Policies\PolicyDefinitions\), and StepWind.adml to the matching
+  \en-US\ subfolder. The settings then appear under:
+      Computer Configuration > Administrative Templates > StepWind
+
+  Every policy maps to a value under  HKLM\SOFTWARE\Policies\StepWind. "Not Configured" leaves the
+  value unset (users control it); Enabled/Disabled writes the value, which the StepWind service
+  enforces and refuses to let any user (or local admin) change through the app.
+
+  Two settings are not exposed here and are set directly (Intune / PowerShell), because their
+  registry types don't map cleanly to a GPO control:
+    - MandatoryFolders : REG_MULTI_SZ, one folder path per line (folders always protected)
+  See enterprise/README.md for the full registry reference.
+-->
+<policyDefinitions revision="1.0" schemaVersion="1.0">
+  <policyNamespaces>
+    <target prefix="stepwind" namespace="StepWind.Policies.Admx" />
+  </policyNamespaces>
+  <resources minRequiredRevision="1.0" />
+
+  <supportedOn>
+    <definitions>
+      <definition name="SUPPORTED_1_0" displayName="$(string.SUPPORTED_1_0)" />
+    </definitions>
+  </supportedOn>
+
+  <categories>
+    <category name="StepWind" displayName="$(string.Cat_StepWind)" />
+  </categories>
+
+  <policies>
+    <!-- Booleans: Enabled/Disabled write a DWORD 1/0; Not Configured = user-controlled. -->
+    <policy name="EncryptionEnabled" class="Machine" displayName="$(string.EncryptionEnabled)"
+            explainText="$(string.EncryptionEnabled_Help)" key="SOFTWARE\Policies\StepWind" valueName="EncryptionEnabled">
+      <parentCategory ref="StepWind" /><supportedOn ref="stepwind:SUPPORTED_1_0" />
+      <enabledValue><decimal value="1" /></enabledValue><disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="EncryptIndex" class="Machine" displayName="$(string.EncryptIndex)"
+            explainText="$(string.EncryptIndex_Help)" key="SOFTWARE\Policies\StepWind" valueName="EncryptIndex">
+      <parentCategory ref="StepWind" /><supportedOn ref="stepwind:SUPPORTED_1_0" />
+      <enabledValue><decimal value="1" /></enabledValue><disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="AutoUpdateEnabled" class="Machine" displayName="$(string.AutoUpdateEnabled)"
+            explainText="$(string.AutoUpdateEnabled_Help)" key="SOFTWARE\Policies\StepWind" valueName="AutoUpdateEnabled">
+      <parentCategory ref="StepWind" /><supportedOn ref="stepwind:SUPPORTED_1_0" />
+      <enabledValue><decimal value="1" /></enabledValue><disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="FlightRecorderEnabled" class="Machine" displayName="$(string.FlightRecorderEnabled)"
+            explainText="$(string.FlightRecorderEnabled_Help)" key="SOFTWARE\Policies\StepWind" valueName="FlightRecorderEnabled">
+      <parentCategory ref="StepWind" /><supportedOn ref="stepwind:SUPPORTED_1_0" />
+      <enabledValue><decimal value="1" /></enabledValue><disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="RespectGitIgnore" class="Machine" displayName="$(string.RespectGitIgnore)"
+            explainText="$(string.RespectGitIgnore_Help)" key="SOFTWARE\Policies\StepWind" valueName="RespectGitIgnore">
+      <parentCategory ref="StepWind" /><supportedOn ref="stepwind:SUPPORTED_1_0" />
+      <enabledValue><decimal value="1" /></enabledValue><disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="AllowUserFolderChanges" class="Machine" displayName="$(string.AllowUserFolderChanges)"
+            explainText="$(string.AllowUserFolderChanges_Help)" key="SOFTWARE\Policies\StepWind" valueName="AllowUserFolderChanges">
+      <parentCategory ref="StepWind" /><supportedOn ref="stepwind:SUPPORTED_1_0" />
+      <enabledValue><decimal value="1" /></enabledValue><disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="AuditEnabled" class="Machine" displayName="$(string.AuditEnabled)"
+            explainText="$(string.AuditEnabled_Help)" key="SOFTWARE\Policies\StepWind" valueName="AuditEnabled">
+      <parentCategory ref="StepWind" /><supportedOn ref="stepwind:SUPPORTED_1_0" />
+      <enabledValue><decimal value="1" /></enabledValue><disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <!-- Scalars: Enabled reveals an input that writes the value; Not Configured = user-controlled. -->
+    <policy name="Retention" class="Machine" displayName="$(string.Retention)"
+            explainText="$(string.Retention_Help)" key="SOFTWARE\Policies\StepWind"
+            presentation="$(presentation.Retention)">
+      <parentCategory ref="StepWind" /><supportedOn ref="stepwind:SUPPORTED_1_0" />
+      <elements>
+        <decimal id="RetentionKeepAllHours" valueName="RetentionKeepAllHours" minValue="1" maxValue="8760" />
+        <decimal id="RetentionHourlyDays" valueName="RetentionHourlyDays" minValue="0" maxValue="365" />
+        <decimal id="RetentionDailyDays" valueName="RetentionDailyDays" minValue="0" maxValue="3650" />
+        <decimal id="RetentionMaxAgeDays" valueName="RetentionMaxAgeDays" minValue="1" maxValue="36500" />
+        <decimal id="RetentionMaxVersionsPerFile" valueName="RetentionMaxVersionsPerFile" minValue="1" maxValue="100000" />
+      </elements>
+    </policy>
+
+    <policy name="StorageLimits" class="Machine" displayName="$(string.StorageLimits)"
+            explainText="$(string.StorageLimits_Help)" key="SOFTWARE\Policies\StepWind"
+            presentation="$(presentation.StorageLimits)">
+      <parentCategory ref="StepWind" /><supportedOn ref="stepwind:SUPPORTED_1_0" />
+      <elements>
+        <text id="MinFreeDiskBytes" valueName="MinFreeDiskBytes" />
+        <text id="MaxStoreBytes" valueName="MaxStoreBytes" />
+      </elements>
+    </policy>
+  </policies>
+</policyDefinitions>

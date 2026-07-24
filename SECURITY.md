@@ -139,6 +139,22 @@ Windows SmartScreen will show "Windows protected your PC" for the installer — 
 unsigned app, not a malware detection. Choose **More info → Run anyway**, and verify the SHA-256
 as above.
 
+## Enterprise / managed environments
+
+On managed fleets an administrator can centrally control StepWind via **Group Policy / MDM**
+(`HKLM\SOFTWARE\Policies\StepWind`, writable only by the org's policy engine). Any value set there
+is **enforced**: the service applies it and refuses to let *any* caller — standard user or local
+administrator — change it through the app, because only the org's policy may. This makes
+machine-wide settings (encryption, updates, retention, storage limits, the flight recorder) and
+the protected-folder set centrally governed, and removes the shared-PC question entirely in a
+managed environment. An ADMX/ADML template ships in `enterprise/policy/`.
+
+Every security-relevant action (settings changes, purges, restores, reversals, folder changes,
+encryption toggles, updates, and policy-denied attempts) is written — naming the acting user — to
+a dedicated **`StepWind` Windows Event Log**, the standard local, SIEM-forwardable audit sink
+(Windows Event Forwarding or any EDR agent can collect it; StepWind itself never sends anything).
+Full deployment, policy, and audit reference: [`enterprise/README.md`](enterprise/README.md).
+
 ## Known limitations (honest)
 
 - **Metadata encryption is opt-in.** File paths, names, and timestamps in the version index are

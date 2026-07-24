@@ -1160,6 +1160,11 @@ async function loadSettings() {
         <div class="page-sub">StepWind is set-and-forget by design — there isn't much to configure.</div>
       </div>
     </div>
+    ${s?.Managed ? `<div class="card set-card" style="border-color:var(--accent);margin:0 0 14px">
+      <div class="set-row"><div>
+        <div class="set-title">Managed by your organization</div>
+        <div class="set-sub">Some settings are set by your organization's policy and can't be changed here${s?.AllowUserFolderChanges === false ? ", including which folders are protected" : ""}. They appear dimmed.</div>
+      </div></div></div>` : ""}
     <div class="set-scroll">
      <div class="set-cols">
       <div class="set-section">
@@ -1320,6 +1325,24 @@ async function loadSettings() {
   wireSwitch("sw-gitignore", (on) => patchAndReload({ RespectGitIgnore: on }, false));
   wireSwitch("sw-enc", (on) => patchAndReload({ EncryptionEnabled: on }, true));
   wireSwitch("sw-encidx", (on) => patchAndReload({ EncryptIndex: on }, false));
+
+  // Enterprise: dim + unwire any switch whose setting is enforced by org policy, so a user can't
+  // toggle something the service will only refuse. The service is the real gate; this is UX.
+  const managedSwitch = {
+    AutoUpdateEnabled: "sw-update", FlightRecorderEnabled: "sw-fr",
+    RespectGitIgnore: "sw-gitignore", EncryptionEnabled: "sw-enc", EncryptIndex: "sw-encidx",
+  };
+  (s?.ManagedKeys || []).forEach((key) => {
+    const el = $("#" + managedSwitch[key], host);
+    if (el) {
+      el.onclick = null;
+      el.onkeydown = null;
+      el.removeAttribute("tabindex");
+      el.setAttribute("aria-disabled", "true");
+      el.classList.add("managed");
+      el.title = "Managed by your organization";
+    }
+  });
 
   $("#ret-apply", host).onclick = async () => {
     const patch = {
