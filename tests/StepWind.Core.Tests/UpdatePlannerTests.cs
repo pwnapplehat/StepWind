@@ -207,10 +207,13 @@ public class UpdatePlannerTests
     }
 
     [Fact]
-    public void A_trusted_unpinned_signature_may_install_silently()
+    public void An_unpinned_signature_is_never_installed_silently()
     {
-        Assert.True(UpdatePlanner.ShouldSilentlyInstall(SignatureTrust.Trusted, "ABCD", expectedThumbprint: null));
-        Assert.True(UpdatePlanner.ShouldSilentlyInstall(SignatureTrust.Trusted, "ABCD", expectedThumbprint: ""));
+        // Fail-closed: with no certificate pinned, even a trusted signature does NOT earn a silent
+        // SYSTEM install (it's staged for user consent instead). An attacker who replaced the
+        // release assets could sign with any trusted-CA cert, so only OUR pinned cert may go silent.
+        Assert.False(UpdatePlanner.ShouldSilentlyInstall(SignatureTrust.Trusted, "ABCD", expectedThumbprint: null));
+        Assert.False(UpdatePlanner.ShouldSilentlyInstall(SignatureTrust.Trusted, "ABCD", expectedThumbprint: ""));
     }
 
     [Fact]

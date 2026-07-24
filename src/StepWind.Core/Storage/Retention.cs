@@ -44,6 +44,7 @@ public static class Retention
 
         long lastHourlyBucket = long.MinValue;
         long lastDailyBucket = long.MinValue;
+        long lastWeeklyBucket = long.MinValue;
 
         foreach (FileVersion v in newestFirst)
         {
@@ -76,9 +77,12 @@ public static class Retention
             }
             else
             {
+                // Weekly tier: one version per 7-day bucket. Must track its OWN last-bucket, not
+                // reuse lastDailyBucket (a day-bucket number of a different magnitude), or the
+                // first weekly-tier version is compared against a stale daily value.
                 long bucket = v.CapturedUtc.Ticks / (TimeSpan.TicksPerDay * 7);
-                keepThis = bucket != lastDailyBucket;
-                if (keepThis) lastDailyBucket = bucket;
+                keepThis = bucket != lastWeeklyBucket;
+                if (keepThis) lastWeeklyBucket = bucket;
             }
 
             if (keepThis)

@@ -39,10 +39,17 @@ public enum UpdateOutcome
 public static class UpdatePlanner
 {
     /// <summary>
-    /// The security gate for a NO-PROMPT, SYSTEM-run install: only a setup that is Authenticode
-    /// <see cref="SignatureTrust.Trusted"/> — and, once a thumbprint is pinned, signed by exactly
-    /// StepWind's certificate — may install silently. Everything else must be staged for a
-    /// user-consented install instead. Kept pure so this decision is unit-tested directly.
+    /// The security gate for a NO-PROMPT, SYSTEM-run install: a setup may install silently ONLY if
+    /// it is Authenticode <see cref="SignatureTrust.Trusted"/> AND signed by exactly StepWind's
+    /// PINNED certificate. Everything else — including a trusted signature when no pin is
+    /// configured — must be staged for a user-consented install instead.
+    ///
+    /// Fail-closed on an empty pin is deliberate: the attacker in this model can replace the
+    /// GitHub release assets (both the setup and its checksums), so "any signature that chains to
+    /// a trusted CA" is not a sufficient gate for arbitrary code as SYSTEM with no UAC — only OUR
+    /// certificate is. An empty <paramref name="expectedThumbprint"/> therefore means "silent
+    /// updates are not configured", never "trust any signed installer". Kept pure so this decision
+    /// is unit-tested directly.
     /// </summary>
     public static bool ShouldSilentlyInstall(SignatureTrust trust, string? actualThumbprint, string? expectedThumbprint)
     {
@@ -51,8 +58,8 @@ public static class UpdatePlanner
             return false;
         }
 
-        return string.IsNullOrEmpty(expectedThumbprint)
-            || string.Equals(actualThumbprint, expectedThumbprint, StringComparison.OrdinalIgnoreCase);
+        return !string.IsNullOrEmpty(expectedThumbprint)
+            && string.Equals(actualThumbprint, expectedThumbprint, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Normalizes a tag/version string ("v1.2.3", "1.2.3-rc1+build") to a 3-part <see cref="Version"/>.</summary>

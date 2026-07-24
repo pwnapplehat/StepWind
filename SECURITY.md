@@ -24,26 +24,34 @@ not against anything in the request payload.
 
 ## Who may do what over the pipe
 
-The pipe is reachable by authenticated local users, but the service authorizes every command:
+The pipe accepts **local** authenticated users only — the NETWORK group is explicitly denied, so
+a remote SMB client (`\\host\pipe\StepWind.Service`) is rejected before any command runs — and it
+is bounded against denial of service (a per-connection read timeout and a maximum request size,
+so a stalled or flooding client can't pin the service's handler slots). Every command is then
+authorized against the connecting user's impersonated Windows identity:
 
 | Action | Allowed for |
 |---|---|
 | Read a file's history / version content / browse / diff | the owner of that protected root, an administrator, or a user whose own token can read the folder |
-| See a timeline operation (and get its undo handle) | a caller who can reach that file; others never see it |
-| Reverse a move/rename | same as seeing it — you can't undo an operation you can't see |
+| See a timeline operation (and get its undo handle) | a caller who can reach either endpoint of it; others never see it |
+| Reverse a move/rename | a caller who can access the **restore destination** (where the file is moved back to) — stricter than merely seeing it, so no one can drive a SYSTEM move into a folder they have no rights to |
 | Restore a version | the root's owner or an administrator; the restore destination is never caller-controlled for unprivileged callers |
 | Add a protected folder | any user, but only a folder **their own token can read** (so the SYSTEM service can't be used to capture files they couldn't read); the adder becomes the owner |
 | Stop protecting / purge one root's history | that root's owner or an administrator |
 | Purge **all** history / "unprotected" history | administrator only |
-| Change machine-wide settings (encryption, index encryption, auto-update, flight recorder, `.gitignore` policy, storage limits, retention) | the connecting user while only one real user owns history here; an **administrator** once a second user does |
+| Change machine-wide settings (encryption, index encryption, auto-update, flight recorder, `.gitignore` policy, storage limits, retention) | the sole owner of history here, or an **administrator** once any *other* user also owns history |
 
-**Machine-wide settings on shared PCs:** as long as a single real user owns protected history —
-the common case — that user changes machine-wide settings from the unelevated app with no
-friction, because they are the machine's owner in every meaningful sense. The moment a second
-user owns history on the same PC, those settings require an administrator (so no user can, say,
-switch encryption off for everyone). An admin applies them from an elevated terminal:
-`stepwind-cli set-settings <json>`. Per-user concerns — folders, exclusions, what the timeline
-shows — always stay under the ownership rules above.
+The unelevated GUI/CLI/MCP also verify, after connecting, that the pipe is **owned by a
+privileged identity** (SYSTEM/Administrators) before trusting it — so a standard-user process
+can't squat the pipe name and feed you a forged "you're protected" view.
+
+**Machine-wide settings on shared PCs:** as long as you are the only real user who owns protected
+history — the common case — you change machine-wide settings from the unelevated app with no
+friction, because it is your data alone. The moment *another* user owns history on the same PC,
+those settings require an administrator (so no bystander account can, say, switch encryption off
+or set destructive retention on someone else's data). An admin applies them from an elevated
+terminal: `stepwind-cli set-settings <json>`. Per-user concerns — folders, exclusions, what the
+timeline shows — always stay under the ownership rules above.
 
 **Root ownership** is recorded when a folder is added, backfilled from the folder's on-disk NTFS
 owner when no owner is on record (e.g. after a settings reset), and always has a live fallback:
@@ -84,22 +92,31 @@ the store, so treat it like the master secret it is.
 
 ## Updates are fail-closed
 
-The service checks GitHub for new releases and applies one **only** if:
+The service downloads a candidate into an **ACL-locked staging folder (hardened before the
+download begins)**, and installs it **silently only** if all of:
 
 1. the release publishes `SHA256SUMS.txt` (absent ⇒ refused — no "assume good"), and
 2. the downloaded setup's SHA-256 matches the checksum **for its filename**, and
-3. the setup carries a **trusted Authenticode signature** (verified with `WinVerifyTrust`).
+3. the setup carries a **trusted Authenticode signature** (verified with `WinVerifyTrust`) that
+   matches StepWind's **pinned certificate thumbprint**.
 
 A checksum published in the same release an attacker would tamper with proves integrity, not
-authenticity — so the **code signature is the real root of trust**.
+authenticity — so a pinned code signature is the real root of trust. Requirement 3 is fail-closed
+on the pin: **while no thumbprint is pinned (as today, before code-signing is set up), NO release
+is ever installed silently** — a trusted signature alone is not enough, because an attacker who
+replaced the release assets could sign with any certificate that chains to a trusted CA.
 
-- **Signed release** → installed silently (the service is already elevated).
-- **Unsigned release** (today, until code-signing is set up) → the verified download is **staged**
-  in an ACL-locked folder and offered in the app as a **one-click install**; you approve the normal
-  UAC prompt. StepWind never runs an unsigned installer silently as SYSTEM.
+- **Pinned-and-signed release** → installed silently (the service is already elevated). The exact
+  staged file is re-verified (checksum + signature) immediately before launch, so nothing that
+  changed after the first check is ever run.
+- **Everything else** (unsigned, or signed but not the pinned cert) → the verified download stays
+  in the ACL-locked staging folder and is offered in the app as a **one-click install**; you
+  approve the normal UAC prompt. StepWind never runs such an installer silently as SYSTEM.
 
 The installer itself is the rollback actor: it backs up the current install before swapping files
-and restores it if the new service doesn't start, so an update can't leave you unprotected.
+and restores it if the new service doesn't start, so an update can't leave you unprotected. If a
+staged release is later withdrawn, the service clears the stale download instead of offering a
+ghost update.
 
 ### Verifying a download yourself
 

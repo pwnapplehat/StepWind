@@ -81,19 +81,28 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
 
 - **100% local.** No cloud, no account, no telemetry. The only network call is the release check
   on GitHub, and it can be turned off.
-- **Per-user authorization on the service pipe.** The elevated service resolves the connecting
-  user's Windows identity by impersonating the pipe and authorizes every private or destructive
-  action against it: one account can't read, browse, restore, or purge another's history; the
-  timeline shows a caller only operations on files they can access; machine-wide purges require
-  an administrator. Adding a folder requires that the caller's own token can read it — the SYSTEM
-  service can't be used to capture files the caller couldn't open themselves.
-- **Machine-wide settings are elevation-gated on shared PCs.** While one real user owns history,
-  they manage everything from the unelevated app; once a second user owns history on the same
-  machine, encryption/update/retention/storage settings require an administrator
-  (`stepwind-cli set-settings` from an elevated terminal).
-- **Undo handles can't be forged.** The timeline hands out opaque handles into the recorder's
-  own ring; the service re-derives real paths from its own entry and rejects any handle it didn't
-  issue — a client can't craft "move *this* to *there* as SYSTEM." Restore destinations are never
+- **A locked-down service pipe.** The elevated service's named pipe accepts **local** users only
+  (the NETWORK group is denied, so remote SMB clients are rejected) and is bounded against denial
+  of service (per-connection read timeout + maximum request size, so a stalled or flooding client
+  can't take the service offline). The unelevated GUI/CLI/MCP also verify the pipe is owned by a
+  privileged identity before trusting it, so a standard-user process can't squat the name and fake
+  a "you're protected" view.
+- **Per-user authorization.** The service resolves the connecting user's Windows identity by
+  impersonating the pipe and authorizes every private or destructive action against it: one
+  account can't read, browse, restore, or purge another's history; the timeline shows a caller
+  only operations on files they can access; machine-wide purges require an administrator. Adding a
+  folder requires that the caller's own token can read it — the SYSTEM service can't be used to
+  capture files the caller couldn't open themselves.
+- **Machine-wide settings are elevation-gated on shared PCs.** While you are the only user who
+  owns history, you manage everything from the unelevated app; the moment *another* user also owns
+  history, encryption/update/retention/storage settings require an administrator
+  (`stepwind-cli set-settings` from an elevated terminal) — so no bystander account can weaken
+  protection of data that isn't theirs.
+- **Undo handles can't be forged, and reversal is destination-gated.** The timeline hands out
+  opaque handles into the recorder's own ring; the service re-derives real paths from its own
+  entry and rejects any handle it didn't issue — a client can't craft "move *this* to *there* as
+  SYSTEM." Reversing an operation additionally requires access to the restore *destination*, so no
+  one can drive a SYSTEM move into a folder they have no rights to. Restore destinations are never
   caller-controlled for unprivileged users, and recovered files from no-longer-protected folders
   land in the requesting user's own profile, never a world-readable folder.
 - **Encryption at rest as a live toggle:** AES-256-GCM with a machine-DPAPI-sealed key; flipping
@@ -106,11 +115,14 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
 
 ### Updates
 
-- **Fail-closed, verified, rollback-safe.** A release installs only if it ships `SHA256SUMS.txt`,
-  the download's SHA-256 matches for its exact filename, *and* the setup carries a trusted
-  Authenticode signature — a signed release installs silently; an unsigned one (until free
-  code-signing via SignPath Foundation is enabled) is staged in an ACL-locked folder and offered
-  as a one-click install behind the normal UAC prompt. The installer is the rollback actor: it
+- **Fail-closed, verified, rollback-safe.** A release is downloaded into an ACL-locked staging
+  folder (hardened before the download) and installs silently only if it ships `SHA256SUMS.txt`,
+  the download's SHA-256 matches for its exact filename, *and* the setup is Authenticode-signed by
+  StepWind's **pinned** certificate — re-verified on the exact staged file immediately before
+  launch. Until a certificate is pinned (as today, before free code-signing via SignPath
+  Foundation is enabled), **nothing installs silently**: every release — even a validly signed one
+  — is staged in the ACL-locked folder and offered as a one-click install behind the normal UAC
+  prompt. The installer is the rollback actor: it
   backs up the current install, health-checks the new service, and restores the backup if it
   won't start. A pulled release retracts its staged offer instead of advertising a ghost update.
 - **Releases ship for x64 and ARM64**, and the updater picks the installer matching the CPU.
@@ -179,7 +191,7 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
 
 ---
 
-Verified for release: **281 unit tests** (chunking, store, retention, undo, authorization,
+Verified for release: **284 unit tests** (chunking, store, retention, undo, authorization,
 updates, IPC wire contract, root namespaces — timing-sensitive tests written deterministically);
 real-hardware elevated end-to-end runs through the production classes (reconstruct + reverse +
 version round-trip, including the marker-time delete path measured against the live NTFS

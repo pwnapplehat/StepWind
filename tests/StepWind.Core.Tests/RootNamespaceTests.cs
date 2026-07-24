@@ -69,6 +69,65 @@ public class RootNamespaceTests : IDisposable
     }
 
     [Fact]
+    public void Purge_unprotected_keeps_a_still_protected_folder_with_a_suffixed_namespace()
+    {
+        // C1 regression: "clean up unprotected history" must key off each root's STORE NAMESPACE,
+        // not its leaf name. A second same-named folder gets a suffixed namespace ("Documents~..");
+        // both folders are protected, so purge-unprotected must keep BOTH histories.
+        string docsA = Path.Combine(_root, "driveA", "Documents");
+        string docsB = Path.Combine(_root, "driveB", "Documents");
+        Directory.CreateDirectory(docsA);
+        Directory.CreateDirectory(docsB);
+
+        StepWindSettings settings = Settings(Path.Combine(_root, "store"), docsA, docsB);
+        using var host = new StepWindHost(settings, new GzipBlobCodec());
+
+        File.WriteAllText(Path.Combine(docsA, "a.txt"), "alpha");
+        File.WriteAllText(Path.Combine(docsB, "b.txt"), "bravo");
+        string relA = CaptureNow(host, Path.Combine(docsA, "a.txt"));
+        string relB = CaptureNow(host, Path.Combine(docsB, "b.txt"));
+        Assert.NotEqual(relA.Split('/')[0], relB.Split('/')[0]); // one namespace is suffixed
+
+        // Purge unprotected history (admin/in-process trusted). Nothing is unprotected here.
+        IpcResponse purge = host.Handle(new IpcRequest { Command = IpcCommand.PurgeHistory, Arg1 = "unprotected" });
+        Assert.True(purge.Ok, purge.Error);
+
+        // Both protected folders' histories survive — the suffixed one was NOT mistaken for unprotected.
+        Assert.NotEmpty(JsonSerializer.Deserialize<VersionEntry[]>(
+            host.Handle(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = relA }).Json!)!);
+        Assert.NotEmpty(JsonSerializer.Deserialize<VersionEntry[]>(
+            host.Handle(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = relB }).Json!)!);
+    }
+
+    [Fact]
+    public void Purge_unprotected_still_removes_a_removed_folders_history()
+    {
+        // The other half of C1: history whose namespace belongs to NO current watched folder is
+        // genuinely unprotected and must still be swept.
+        string docs = Path.Combine(_root, "user", "Documents");
+        Directory.CreateDirectory(docs);
+        StepWindSettings settings = Settings(Path.Combine(_root, "store"), docs);
+        using var host = new StepWindHost(settings, new GzipBlobCodec());
+
+        File.WriteAllText(Path.Combine(docs, "keep.txt"), "keep me");
+        string relKept = CaptureNow(host, Path.Combine(docs, "keep.txt"));
+
+        // Inject dead history under a namespace no watched folder maps to.
+        settings.StoreRoot.ToString(); // (store already open) — append a stray version directly.
+        var log = new VersionLog(Path.Combine(settings.StoreRoot, "versions.jsonl"));
+        log.Append(new FileVersion { RelativePath = "OldProject/gone.cs", CapturedUtc = DateTime.UtcNow, Size = 1, Chunks = [] });
+
+        using var host2 = new StepWindHost(settings, new GzipBlobCodec());
+        IpcResponse purge = host2.Handle(new IpcRequest { Command = IpcCommand.PurgeHistory, Arg1 = "unprotected" });
+        Assert.True(purge.Ok, purge.Error);
+
+        Assert.NotEmpty(JsonSerializer.Deserialize<VersionEntry[]>(
+            host2.Handle(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = relKept }).Json!)!); // protected kept
+        Assert.Empty(JsonSerializer.Deserialize<VersionEntry[]>(
+            host2.Handle(new IpcRequest { Command = IpcCommand.GetHistory, Arg1 = "OldProject/gone.cs" }).Json!)!); // dead swept
+    }
+
+    [Fact]
     public void A_watched_folder_adopts_its_own_unmapped_history_at_startup()
     {
         string docs = Path.Combine(_root, "user", "Documents");

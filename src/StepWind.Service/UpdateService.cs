@@ -107,7 +107,12 @@ public sealed class UpdateService
                 return UpdateOutcome.NoChecksums;
             }
 
+            // Harden the staging dir to SYSTEM+Administrators BEFORE downloading anything, so the
+            // setup lands in a directory a standard user can't write to. This closes the
+            // verify-then-launch TOCTOU window: without it, a local user could swap the verified
+            // file for a malicious one between the checksum/signature check and Process.Start.
             Directory.CreateDirectory(_stagingDir);
+            StoreAcl.HardenReadExecute(_stagingDir, _log);
             string setupPath = Path.Combine(_stagingDir, $"StepWind-{latest.ToString(3)}-setup.exe");
 
             await Download(release.SetupUrl, setupPath, ct);
@@ -133,7 +138,19 @@ public sealed class UpdateService
 
             if (signedOk)
             {
-                _log("setup verified (checksum + trusted Authenticode signature); launching silent update");
+                // Re-verify the exact staged file immediately before launch (defense in depth on
+                // top of the hardened staging dir): confirm the checksum and signature still hold,
+                // so nothing that slipped in after the first check is ever run as SYSTEM.
+                string recheck = await Sha256HexAsync(setupPath, ct);
+                if (!UpdatePlanner.ChecksumMatches(sumsText, Path.GetFileName(setupPath), recheck)
+                    || Authenticode.VerifyFile(setupPath) != SignatureTrust.Trusted)
+                {
+                    _log("update ABORTED: staged setup changed after verification — not launching");
+                    TryDelete(setupPath);
+                    return UpdateOutcome.ChecksumMismatch;
+                }
+
+                _log("setup verified (checksum + pinned Authenticode signature); launching silent update");
                 // The installer stops this service, backs up the current install, swaps files, and —
                 // if the new service won't start — restores the backup (see installer/stepwind.iss).
                 Process.Start(new ProcessStartInfo(setupPath, "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES")
@@ -143,12 +160,10 @@ public sealed class UpdateService
                 return UpdateOutcome.Launched;
             }
 
-            // FREE, SAFE PATH: the download is checksum-verified but not code-signed, so we do NOT
-            // run it silently as SYSTEM (that would be the RCE channel). Instead we lock the staged
-            // file so only SYSTEM/Admins can replace it, and hand it to the user to install with one
-            // click — they get the normal UAC (and SmartScreen) prompt and consent, exactly like any
-            // download. The GUI surfaces "update ready" from the pipe status.
-            StoreAcl.HardenReadExecute(_stagingDir, _log);
+            // FREE, SAFE PATH: the download is checksum-verified but not run silently as SYSTEM
+            // (that would be the RCE channel). The staging dir is already ACL-locked (above), so
+            // we just hand the file to the user to install with one click — they get the normal
+            // UAC (and SmartScreen) prompt and consent. The GUI surfaces "update ready" from status.
             CleanOtherStagedSetups(setupPath);
             _log($"update {latest.ToString(3)} downloaded + checksum-verified and staged for one-click install ({trust})");
             _onStaged?.Invoke(new PendingUpdate(latest.ToString(3), setupPath, Signed: false));

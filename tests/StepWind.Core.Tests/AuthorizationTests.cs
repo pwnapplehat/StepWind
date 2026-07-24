@@ -182,10 +182,10 @@ public class AuthorizationTests : IDisposable
     }
 
     [Fact]
-    public void Machine_wide_settings_stay_frictionless_on_a_single_user_machine()
+    public void Machine_wide_settings_stay_frictionless_for_the_sole_owner()
     {
-        // Only ONE real user owns history here (the fixture seeds just _mySid), so the owner may
-        // flip machine-wide settings from the unelevated GUI exactly as before.
+        // Only ONE real user owns history here (the fixture seeds just _mySid = Owner), so that
+        // sole owner may flip machine-wide settings from the unelevated GUI with no friction.
         IpcResponse resp = _host.Handle(new IpcRequest
         {
             Command = IpcCommand.SetSettings,
@@ -196,13 +196,53 @@ public class AuthorizationTests : IDisposable
     }
 
     [Fact]
+    public void A_non_owning_second_user_cannot_change_machine_wide_settings_on_a_single_owner_pc()
+    {
+        // S1 regression: the fixture has exactly one owner (_mySid). A DIFFERENT, non-owning local
+        // user must NOT be able to weaken protection of the owner's data — the gate keys off
+        // caller ownership, not owner headcount. (Stranger owns nothing here.)
+        CallerContext stranger = new() { UserSid = StrangerSid, UserName = "bystander" };
+
+        // Use values that are genuine CHANGES from the fixture's current settings (echoing the
+        // current value back isn't a change and is intentionally allowed).
+        foreach (var patch in new object[]
+        {
+            new { EncryptionEnabled = !_settings.EncryptionEnabled },
+            new { AutoUpdateEnabled = !_settings.AutoUpdateEnabled },
+            new { RetentionMaxVersionsPerFile = _settings.Retention.MaxVersionsPerFile + 5 },
+        })
+        {
+            IpcResponse denied = _host.Handle(new IpcRequest
+            {
+                Command = IpcCommand.SetSettings,
+                Arg1 = JsonSerializer.Serialize(patch),
+            }, stranger);
+            Assert.False(denied.Ok, "a non-owning second user must not change machine-wide settings");
+            Assert.Contains("administrator", denied.Error!, StringComparison.OrdinalIgnoreCase);
+        }
+
+        // The real owner is still unhindered, and an admin can always act.
+        Assert.True(_host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { AutoUpdateEnabled = false }),
+        }, Owner).Ok);
+        Assert.True(_host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { FlightRecorderEnabled = false }),
+        }, Admin).Ok);
+    }
+
+    [Fact]
     public void Machine_wide_settings_need_an_admin_once_a_second_user_owns_history()
     {
         // A second REAL user (unresolvable S-1-5-21 SID with a normal RID — a deleted or roaming
-        // profile counts deliberately) also owns protected history → the machine is shared.
+        // profile counts deliberately) also owns protected history → even the first owner must now
+        // elevate, because the change would affect someone else's data too.
         _settings.RootOwners["OtherUsersFolder"] = [StrangerSid];
 
-        // Non-privileged: changing a machine-wide setting is refused with a readable reason…
+        // The original owner is now refused (another user's data is at stake)…
         IpcResponse denied = _host.Handle(new IpcRequest
         {
             Command = IpcCommand.SetSettings,

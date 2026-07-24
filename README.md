@@ -172,7 +172,7 @@ tests/                 deterministic Core tests
 
 ## Verified
 
-- **281 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+- **284 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
   integrity, encryption round-trip & tamper rejection, DPAPI key stability, live encryption
   toggling (mixed-store reads, background re-encode convergence in both directions,
   interrupted-migration recovery, storage byte tracking, the IPC toggle end-to-end), USN

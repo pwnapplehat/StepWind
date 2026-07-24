@@ -635,6 +635,49 @@ public sealed class StepWindHost : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Authorization to REVERSE an operation (stricter than merely seeing it). A reverse moves the
+    /// file back to its ORIGINAL location (<see cref="FileOperation.OldPath"/>) as SYSTEM, so the
+    /// caller must have access to that destination side — not just be able to read the file's
+    /// current location. Seeing an op needs read access to EITHER endpoint (privacy); reversing it
+    /// needs access to where the file will land, so a caller can't make SYSTEM write a file into a
+    /// location they themselves have no rights to.
+    /// </summary>
+    private bool CallerCanReverseOperation(CallerContext caller, FileOperation op, WatchEngine watch,
+        Dictionary<string, bool> dirAccess)
+    {
+        if (caller.IsPrivileged)
+        {
+            return true;
+        }
+
+        string? dest = op.OldPath; // reversal restores the file here
+        if (string.IsNullOrEmpty(dest))
+        {
+            return false;
+        }
+
+        string? rel = watch.RelativeToRoot(dest);
+        if (rel is not null && CallerCanAccessRelative(caller, rel))
+        {
+            return true; // owns the protected root the file is being restored into
+        }
+
+        string? dir = TryGetDirectory(dest);
+        if (dir is null)
+        {
+            return false;
+        }
+
+        if (!dirAccess.TryGetValue(dir, out bool canRead))
+        {
+            canRead = RootAccess.CallerCanReadDirectory(caller, dir);
+            dirAccess[dir] = canRead;
+        }
+
+        return canRead;
+    }
+
     private static string? TryGetDirectory(string path)
     {
         try { return System.IO.Path.GetDirectoryName(path); }
@@ -917,12 +960,14 @@ public sealed class StepWindHost : IDisposable
     }
 
     /// <summary>
-    /// On a machine where MORE THAN ONE real user owns protected history, machine-wide behavior
-    /// (encryption, index encryption, auto-update, the flight recorder, .gitignore capture
-    /// policy, storage limits, retention) may only be changed by an administrator — otherwise any
-    /// user could, say, switch encryption off for everyone. On a single-user machine (the common
-    /// case) the one real user IS the machine owner, so nothing changes for them. Per-user
-    /// concerns (folders, exclusions, timeline display) stay under the ownership rules.
+    /// Machine-wide behavior (encryption, index encryption, auto-update, the flight recorder,
+    /// .gitignore capture policy, storage limits, retention) may only be changed by an
+    /// administrator when ANOTHER real user already owns protected history on this PC — otherwise
+    /// a bystander account could, say, switch encryption off or set destructive retention on the
+    /// owner's data. The sole owner (or the very first person, before any history is owned) keeps
+    /// the frictionless unelevated flow, because there is no one else's data to endanger. This
+    /// authorizes on the CALLER's relationship to existing owners, never on a raw owner headcount.
+    /// Per-user concerns (folders, exclusions, timeline display) stay under the ownership rules.
     /// </summary>
     private IpcResponse? AuthorizeMachineWideChange(CallerContext caller, SettingsPatch patch)
     {
@@ -947,36 +992,42 @@ public sealed class StepWindHost : IDisposable
             (patch.RetentionMaxAgeDays is int ma && ma != _settings.Retention.MaxAgeDays) ||
             (patch.RetentionMaxVersionsPerFile is int mv && mv != _settings.Retention.MaxVersionsPerFile);
 
-        if (!touchesMachineWide || !IsMultiUserMachine())
+        if (!touchesMachineWide || !AnotherRealUserOwnsHistory(caller))
         {
             return null;
         }
 
         return IpcResponse.Fail(
-            "This PC has protected history belonging to more than one user, so machine-wide settings " +
-            "(encryption, updates, retention, storage limits, the flight recorder) can only be changed " +
-            "by an administrator. From an elevated terminal, run: stepwind-cli set-settings <json>");
+            "Another user on this PC owns protected history, so machine-wide settings (encryption, " +
+            "updates, retention, storage limits, the flight recorder) can only be changed by an " +
+            "administrator. From an elevated terminal, run: stepwind-cli set-settings <json>");
     }
 
-    /// <summary>More than one REAL user account owns protected history on this machine.</summary>
-    private bool IsMultiUserMachine()
+    /// <summary>
+    /// True if some REAL user account OTHER THAN the caller owns protected history here. Used to
+    /// decide whether a non-privileged caller may change machine-wide settings: allowed when they
+    /// are the sole owner (or nothing is owned yet), refused the moment a different user's data is
+    /// at stake. Authorizes on ownership, not on a raw count.
+    /// </summary>
+    private bool AnotherRealUserOwnsHistory(CallerContext caller)
     {
-        var users = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string? callerSid = caller.UserSid;
         lock (_ownersLock)
         {
             foreach (List<string> owners in _settings.RootOwners.Values)
             {
                 foreach (string sid in owners)
                 {
-                    if (RootAccess.IsRealUserSid(sid))
+                    if (RootAccess.IsRealUserSid(sid)
+                        && !string.Equals(sid, callerSid, StringComparison.OrdinalIgnoreCase))
                     {
-                        users.Add(sid);
+                        return true;
                     }
                 }
             }
         }
 
-        return users.Count > 1;
+        return false;
     }
 
     /// <summary>
@@ -1425,9 +1476,10 @@ public sealed class StepWindHost : IDisposable
             return IpcResponse.Fail("operation not found (it may have aged out of the timeline)");
         }
 
-        // A non-privileged caller may only reverse operations touching files they can reach —
-        // this is what stops one local user undoing another user's move via the SYSTEM service.
-        if (!CallerCanSeeOperation(caller, lookup.Op, _watch, new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)))
+        // A non-privileged caller may only reverse an operation whose RESTORE DESTINATION they can
+        // access — stricter than "can see it", so a caller can't drive a SYSTEM move into a folder
+        // they have no rights to (see CallerCanReverseOperation).
+        if (!CallerCanReverseOperation(caller, lookup.Op, _watch, new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)))
         {
             return IpcResponse.Fail("You don't have access to reverse this operation.");
         }
@@ -1473,7 +1525,7 @@ public sealed class StepWindHost : IDisposable
                 continue;
             }
 
-            if (!CallerCanSeeOperation(caller, op, _watch, access))
+            if (!CallerCanReverseOperation(caller, op, _watch, access))
             {
                 results.Add(new { Token = token, Success = false, Message = "You don't have access to reverse this operation." });
                 continue;
@@ -1802,10 +1854,15 @@ public sealed class StepWindHost : IDisposable
             }
             else if (selector.Equals("unprotected", StringComparison.OrdinalIgnoreCase))
             {
-                var protectedNames = new HashSet<string>(
-                    _settings.WatchedFolders.Select(System.IO.Path.GetFileName).OfType<string>(),
+                // Keep history whose first path segment is the STORE NAMESPACE of a still-watched
+                // folder. Comparing folder leaf names here would be wrong: NamespaceOf suffixes a
+                // colliding leaf to "Documents~hash", so a leaf-name compare would treat a live
+                // suffixed root as "unprotected" and purge its history (and could keep a removed
+                // root's dead history). Always map through the namespace.
+                var protectedNamespaces = new HashSet<string>(
+                    _settings.WatchedFolders.Select(NamespaceOf),
                     StringComparer.OrdinalIgnoreCase);
-                keep = [.. all.Where(v => protectedNames.Contains(FirstSegment(v.RelativePath)))];
+                keep = [.. all.Where(v => protectedNamespaces.Contains(FirstSegment(v.RelativePath)))];
             }
             else
             {
