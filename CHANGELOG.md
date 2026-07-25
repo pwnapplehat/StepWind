@@ -2,6 +2,52 @@
 
 All notable changes to StepWind are documented here.
 
+## 1.0.1 — 2026-07-25
+
+Two fixes worth shipping on their own, plus the installer wearing the product's own face. Everyone
+on 1.0.0 should take this one: the MCP fix below means an AI agent asking "which folders are
+protected?" got an error every single time.
+
+### Fixed
+
+- **`stepwind_list_protected_folders` failed on every call, for every agent.** The tool asks the
+  service for settings, and the MCP gateway's command allow-list did not include that command, so
+  every invocation returned "not permitted to call 'GetSettings'" — one of twelve advertised tools
+  was dead on arrival. It works now, and the reason it shipped is fixed too: the CI smoke test only
+  checked that tools were *advertised*, never that any could be *called*. It now calls every tool it
+  finds, with arguments derived from each tool's own schema, so a future tool wired to a blocked
+  command fails the build instead of the user.
+- **Settings leaked other accounts' protected folder paths.** The settings response returned every
+  protected folder on the machine, while the equivalent status response correctly filtered to the
+  caller. On a shared PC that told any local user — or their AI agent — where another user's
+  protected folders live. Both responses now filter identically.
+- **The uninstaller never asked what to do with your saved history**, despite the website and docs
+  saying it did; it silently kept everything. It now asks — keep it, so a reinstall picks it back
+  up, or erase it — and positively identifies a real history store before deleting anything,
+  including a store you relocated. Silent and scripted uninstalls always keep it: erasing history
+  takes an explicit human answer.
+
+### Changed
+
+- **The installer looks like the app it installs.** StepWind's own dark surface and title bar, brand
+  artwork, and a progress bar in the product's indigo→cyan accent instead of the system's green. It
+  asks *one* screen's worth of questions instead of four, and the license click-through is gone —
+  MIT grants its rights without acceptance, and `LICENSE` still ships in the install folder. The
+  upgrade engine underneath is unchanged: it still stops the service, backs up the current install,
+  health-checks the new one, and rolls back if it won't start.
+- **No install-location prompt, deliberately.** StepWind runs as a SYSTEM service, and a service
+  binary in a folder standard users can write to is a local privilege-escalation path, so it
+  installs under Program Files. Administrators can still redirect with `/DIR=`, and the installer
+  then locks that folder down to SYSTEM/Administrators full control, everyone else read-and-execute.
+- **The release toolchain is pinned and verified.** Installers are built with a fixed Inno Setup
+  version, checked against a SHA-256 pin and its Authenticode publisher before use, and the setup
+  script refuses to compile on a version too old for the theming it relies on — so a floating
+  toolchain cannot quietly ship a generic-looking wizard.
+
+**295 unit tests** (one new: settings must not reveal another account's folders), 0 build warnings,
+and a real elevated upgrade over a running service on real hardware — service healthy afterwards, no
+rollback, existing version history untouched.
+
 ## 1.0.0 — 2026-07-24
 
 Initial release — an undo button for your whole PC, and a safety net for AI coding agents.
@@ -147,12 +193,11 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
 
 ### AI agents & developers
 
-- **An MCP server with guardrails** (`StepWind.Mcp.exe`, stdio, runs on demand): twelve tools —
+- **An MCP server with guardrails** (`StepWind.Mcp.exe`, stdio, runs on demand): eleven tools —
   status, timeline, protected folders, browse/search, file history, read version, unified diff,
   checkpoint, restore, single and batch undo. Read + additive only, enforced by an in-process
   command allow-list: an agent can checkpoint before a risky edit, diff `latest:` vs `current:`,
-  and restore — it can never delete history or change settings. The protected-folders listing is
-  filtered to the calling user, so an agent never learns another account's protected paths. Diffs come from a linear-space
+  and restore — it can never delete history or change settings. Diffs come from a linear-space
   Hirschberg LCS engine, so two 20,000-line files can't allocate a gigabyte inside the service.
 - **An Agent Skill teaches the habits.** Connecting a tool that supports Agent Skills (Cursor,
   Claude Code) also installs StepWind's `SKILL.md` — checkpoint before risky edits, diff after,
@@ -206,34 +251,16 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
   client behind it.
 - An automated installer (Inno Setup) that registers the auto-start service, starts protection,
   adds the tray app to startup, and waits for a genuine service STOP before swapping files on
-  upgrade.
-- **The installer looks like the app it installs**, not like a generic setup wizard: StepWind's own
-  dark surface and title bar, brand artwork, and a progress bar in the product's indigo→cyan accent
-  (drawn from brand images, because a native progress bar cannot be recoloured). It asks *one*
-  screen's worth of questions instead of four — no license click-through, since MIT grants its
-  rights without acceptance and `LICENSE` ships in the install folder.
-- **No install-location prompt, on purpose.** This is a SYSTEM service, and a service binary in a
-  folder standard users can write to is a privilege-escalation path, so it installs under Program
-  Files. Administrators can still redirect it with `/DIR=`, and the installer then locks that
-  folder's ACLs down to SYSTEM/Administrators full, everyone else read-and-execute.
-- **Uninstall asks what should happen to your file history** — keep it (so reinstalling picks it
-  back up) or erase it — and identifies the store positively before deleting anything, including a
-  store that was relocated. Silent and scripted uninstalls always keep it: erasing history requires
-  an explicit human answer.
+  upgrade. Uninstall stops and removes the service and keeps your version history.
 
 ---
 
-Verified for release: **295 unit tests** (chunking, store, retention, undo, authorization,
+Verified for release: **294 unit tests** (chunking, store, retention, undo, authorization,
 updates, IPC wire contract, root namespaces — timing-sensitive tests written deterministically);
 real-hardware elevated end-to-end runs through the production classes (reconstruct + reverse +
 version round-trip, including the marker-time delete path measured against the live NTFS
 journal); a live service run with encryption on (key sealed, zero plaintext in blobs, byte-exact
 restore); a DEBUG-only in-app E2E runner driving the real DOM against the real service; an MCP
-stdio smoke test that **calls every tool** rather than only listing them (a tool that is
-advertised but refused on every invocation used to pass); and an install/upgrade/uninstall pass of
-the real setup on real hardware (service RUNNING, pipe answering immediately after an in-place
-upgrade, store preserved on uninstall).
-
-The installer is also built against a pinned, checksum- and signature-verified Inno Setup, and its
-script refuses to compile on a version too old for the theming it relies on — so a floating
-toolchain cannot quietly ship a generic-looking wizard.
+stdio smoke test in CI; and an install/upgrade/uninstall pass of the real setup on real hardware
+(service RUNNING, pipe answering immediately after an in-place upgrade, store preserved on
+uninstall).
