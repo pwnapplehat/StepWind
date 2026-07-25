@@ -20,7 +20,10 @@
 #
 # Exits 0 on success, non-zero on failure.
 param(
-    [string]$Exe
+    [string]$Exe,
+    # How long each wait on the server's stdout blocks before re-checking the deadline. Only worth
+    # changing to force the wait-expired path in testing (-PollMs 1).
+    [int]$PollMs = 500
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -60,13 +63,20 @@ function Send-Rpc {
 
 # Responses are one JSON object per line, but notifications and log lines can be interleaved, so
 # read until the id being waited on shows up.
+#
+# One read is kept in flight at a time and REUSED when the wait expires. Starting a fresh
+# ReadLineAsync while the previous one is still pending throws "The stream is currently in use by a
+# previous operation on the stream" — which passed locally, where every response beat the wait, and
+# failed on the slower CI runner.
+$script:pendingRead = $null
 function Read-Rpc {
     param([int]$Id, [int]$TimeoutSec = 20)
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
-        $task = $proc.StandardOutput.ReadLineAsync()
-        if (-not $task.Wait(1000)) { continue }
-        $line = $task.Result
+        if ($null -eq $script:pendingRead) { $script:pendingRead = $proc.StandardOutput.ReadLineAsync() }
+        if (-not $script:pendingRead.Wait($PollMs)) { continue }   # keep waiting on the SAME read
+        $line = $script:pendingRead.Result
+        $script:pendingRead = $null
         if ($null -eq $line) { return $null }        # stdout closed: server gone
         if (-not $line.Trim()) { continue }
         try { $obj = $line | ConvertFrom-Json } catch { continue }
