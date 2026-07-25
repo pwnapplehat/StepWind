@@ -32,6 +32,10 @@ public sealed class StepWindGateway
         IpcCommand.GetRecentFiles, IpcCommand.BrowseVersions, IpcCommand.GetVersionContent,
         IpcCommand.DiffVersions, IpcCommand.CaptureNow, IpcCommand.RestoreVersion,
         IpcCommand.ReverseOperation, IpcCommand.ReverseBatch,
+        // GetSettings is read-only and is what stepwind_list_protected_folders returns. Leaving it
+        // out silently broke that tool for every agent: the tool shipped, but every call failed
+        // with "not permitted to call 'GetSettings'". The host filters the folder list per caller.
+        IpcCommand.GetSettings,
     ];
 
     public async Task<string> CallAsync(

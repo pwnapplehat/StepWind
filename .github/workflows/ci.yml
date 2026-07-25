@@ -41,8 +41,8 @@ jobs:
         run: ./build/mcp-smoke.ps1 -Exe dist/win-x64/StepWind.Mcp.exe
         shell: pwsh
 
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+      - name: Install Inno Setup (pinned + verified)
+        run: ./build/install-innosetup.ps1
         shell: pwsh
 
       - name: Build installer
@@ -116,8 +116,8 @@ jobs:
       - name: Publish (win-arm64)
         run: ./build/publish.ps1 -Runtime win-arm64
         shell: pwsh
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
+      - name: Install Inno Setup (pinned + verified)
+        run: ./build/install-innosetup.ps1
         shell: pwsh
       - name: Build ARM64 installer
         run: iscc /DArch=arm64 installer\stepwind.iss

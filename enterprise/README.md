@@ -26,9 +26,14 @@ StepWind-<version>-setup.exe /VERYSILENT /NORESTART /SUPPRESSMSGBOXES
 - **GPO software installation** assigns `.msi` packages only. StepWind ships an EXE (see
   [§5](#5-why-an-exe-installer-not-an-msi)); assign it via a startup script or, preferably, Intune/SCCM.
 
-The uninstaller stops and removes the service and **keeps the version-history store** by default
-(`%ProgramData%\StepWind\store`) so an uninstall/reinstall never destroys history. Delete that
-folder explicitly if you need a clean wipe.
+The uninstaller stops and removes the service, then **asks what should happen to the version-history
+store** (`%ProgramData%\StepWind\store`, or wherever it was relocated to) — keep it, so an
+uninstall/reinstall never destroys history, or erase it.
+
+For fleet removal the answer is decided for you: **a silent or scripted uninstall always KEEPS the
+store** (the prompt is suppressible, and its default is keep). Losing a user's file history takes an
+explicit human choice at the prompt. If your deployment needs a clean wipe, remove
+`%ProgramData%\StepWind` in a follow-up step after the uninstall command.
 
 [\*] Code-signing via the SignPath Foundation OSS program is being set up; until then the installer
 is unsigned and SmartScreen will prompt. See `docs/signing/SignPath-application.md`.

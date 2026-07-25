@@ -277,6 +277,35 @@ public class AuthorizationTests : IDisposable
     }
 
     [Fact]
+    public void GetSettings_only_lists_protected_folders_the_caller_may_see()
+    {
+        // GetSettings is what the GUI reads AND what the stepwind_list_protected_folders MCP tool
+        // returns, so it has to filter the folder list the same way GetStatus does. Returning the
+        // raw setting handed any local user — or their AI agent — the paths of another user's
+        // protected folders.
+        string theirs = Path.Combine(_root, "TheirDocs");
+        Directory.CreateDirectory(theirs);
+        _settings.WatchedFolders = [_watch, theirs];
+        _settings.RootOwners["TheirDocs"] = [StrangerSid];
+
+        string[] OwnerSees(CallerContext caller)
+        {
+            IpcResponse resp = _host.Handle(new IpcRequest { Command = IpcCommand.GetSettings }, caller);
+            Assert.True(resp.Ok, resp.Error);
+            using JsonDocument doc = JsonDocument.Parse(resp.Json!);
+            return [.. doc.RootElement.GetProperty("WatchedFolders").EnumerateArray().Select(e => e.GetString()!)];
+        }
+
+        // The owner of "Docs" sees their own folder and NOT the stranger's.
+        string[] mine = OwnerSees(Owner);
+        Assert.Contains(_watch, mine);
+        Assert.DoesNotContain(theirs, mine);
+
+        // An administrator still sees everything (they can read it on disk anyway).
+        Assert.Contains(theirs, OwnerSees(Admin));
+    }
+
+    [Fact]
     public void The_in_process_caller_keeps_full_trust()
     {
         // Tests, the CLI, and direct in-process calls run inside the engine's trust boundary and

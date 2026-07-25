@@ -147,11 +147,12 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
 
 ### AI agents & developers
 
-- **An MCP server with guardrails** (`StepWind.Mcp.exe`, stdio, runs on demand): eleven tools —
+- **An MCP server with guardrails** (`StepWind.Mcp.exe`, stdio, runs on demand): twelve tools —
   status, timeline, protected folders, browse/search, file history, read version, unified diff,
   checkpoint, restore, single and batch undo. Read + additive only, enforced by an in-process
   command allow-list: an agent can checkpoint before a risky edit, diff `latest:` vs `current:`,
-  and restore — it can never delete history or change settings. Diffs come from a linear-space
+  and restore — it can never delete history or change settings. The protected-folders listing is
+  filtered to the calling user, so an agent never learns another account's protected paths. Diffs come from a linear-space
   Hirschberg LCS engine, so two 20,000-line files can't allocate a gigabyte inside the service.
 - **An Agent Skill teaches the habits.** Connecting a tool that supports Agent Skills (Cursor,
   Claude Code) also installs StepWind's `SKILL.md` — checkpoint before risky edits, diff after,
@@ -205,16 +206,34 @@ Initial release — an undo button for your whole PC, and a safety net for AI co
   client behind it.
 - An automated installer (Inno Setup) that registers the auto-start service, starts protection,
   adds the tray app to startup, and waits for a genuine service STOP before swapping files on
-  upgrade. Uninstall stops and removes the service and keeps your version history.
+  upgrade.
+- **The installer looks like the app it installs**, not like a generic setup wizard: StepWind's own
+  dark surface and title bar, brand artwork, and a progress bar in the product's indigo→cyan accent
+  (drawn from brand images, because a native progress bar cannot be recoloured). It asks *one*
+  screen's worth of questions instead of four — no license click-through, since MIT grants its
+  rights without acceptance and `LICENSE` ships in the install folder.
+- **No install-location prompt, on purpose.** This is a SYSTEM service, and a service binary in a
+  folder standard users can write to is a privilege-escalation path, so it installs under Program
+  Files. Administrators can still redirect it with `/DIR=`, and the installer then locks that
+  folder's ACLs down to SYSTEM/Administrators full, everyone else read-and-execute.
+- **Uninstall asks what should happen to your file history** — keep it (so reinstalling picks it
+  back up) or erase it — and identifies the store positively before deleting anything, including a
+  store that was relocated. Silent and scripted uninstalls always keep it: erasing history requires
+  an explicit human answer.
 
 ---
 
-Verified for release: **294 unit tests** (chunking, store, retention, undo, authorization,
+Verified for release: **295 unit tests** (chunking, store, retention, undo, authorization,
 updates, IPC wire contract, root namespaces — timing-sensitive tests written deterministically);
 real-hardware elevated end-to-end runs through the production classes (reconstruct + reverse +
 version round-trip, including the marker-time delete path measured against the live NTFS
 journal); a live service run with encryption on (key sealed, zero plaintext in blobs, byte-exact
 restore); a DEBUG-only in-app E2E runner driving the real DOM against the real service; an MCP
-stdio smoke test in CI; and an install/upgrade/uninstall pass of the real setup on real hardware
-(service RUNNING, pipe answering immediately after an in-place upgrade, store preserved on
-uninstall).
+stdio smoke test that **calls every tool** rather than only listing them (a tool that is
+advertised but refused on every invocation used to pass); and an install/upgrade/uninstall pass of
+the real setup on real hardware (service RUNNING, pipe answering immediately after an in-place
+upgrade, store preserved on uninstall).
+
+The installer is also built against a pinned, checksum- and signature-verified Inno Setup, and its
+script refuses to compile on a version too old for the theming it relies on — so a floating
+toolchain cannot quietly ship a generic-looking wizard.

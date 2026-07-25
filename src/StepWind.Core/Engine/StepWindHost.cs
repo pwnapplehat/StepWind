@@ -324,7 +324,7 @@ public sealed class StepWindHost : IDisposable
                 IpcCommand.RelocateStore => RequirePrivilege(caller) ?? RelocateStore(request.Arg1 ?? ""),
                 IpcCommand.RestoreVersion => RestoreVersion(request.Arg1 ?? "", request.Arg2, caller),
                 IpcCommand.RunRetention => RequirePrivilege(caller) ?? RunRetentionCommand(),
-                IpcCommand.GetSettings => Ok(BuildSettings()),
+                IpcCommand.GetSettings => Ok(BuildSettings(caller)),
                 IpcCommand.SetSettings => ApplySettings(request.Arg1 ?? "", caller),
                 IpcCommand.PurgeHistory => PurgeHistory(request.Arg1 ?? "", caller),
                 IpcCommand.BrowseVersions => Ok(BrowseVersions(request.Arg1 ?? "", request.Arg2, request.Limit, caller)),
@@ -744,9 +744,15 @@ public sealed class StepWindHost : IDisposable
         return latest is null ? null : $"{latest.RelativePath}|{latest.CapturedUtc.Ticks}";
     }
 
-    private object BuildSettings() => new
+    /// <summary>
+    /// Settings as the GUI (and the MCP surface) see them. WatchedFolders is filtered per caller
+    /// exactly as <see cref="BuildStatus"/> filters it: this response is what
+    /// <c>stepwind_list_protected_folders</c> returns, and an unfiltered list would hand any local
+    /// user — or their AI agent — the paths of ANOTHER user's protected folders.
+    /// </summary>
+    private object BuildSettings(CallerContext caller) => new
     {
-        _settings.WatchedFolders,
+        WatchedFolders = AccessibleFolders(caller),
         _settings.ExcludedPrefixes,
         _settings.FlightRecorderEnabled,
         _settings.AutoUpdateEnabled,
@@ -986,7 +992,7 @@ public sealed class StepWindHost : IDisposable
             });
         }
 
-        return Ok(BuildSettings());
+        return Ok(BuildSettings(caller));
     }
 
     /// <summary>The acting user's identity for an audit record (SYSTEM/in-process trusted callers included).</summary>
