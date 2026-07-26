@@ -2,6 +2,45 @@
 
 All notable changes to StepWind are documented here.
 
+## 1.0.2 — 2026-07-26
+
+**History now takes about a quarter of the disk it used to, at the same capture speed.** Measured
+on a realistic session — 75 documents, 15 saves each, 210 MiB written — the store went from
+51.7 MiB to 13.5 MiB. Nothing you have already captured is affected: every existing version still
+restores byte-for-byte, which is pinned by a test that writes history with the old settings and
+reads it back with the new ones.
+
+### Changed
+
+- **Chunk sizes are tuned for saving the same file repeatedly**, which is what StepWind does, and
+  no longer for backing a machine up occasionally, which is what the previous numbers (borrowed
+  from restic) were for. They averaged 1 MiB with a 256 KiB minimum, so *every file smaller than
+  256 KiB was a single chunk and each save re-stored the whole thing*: measured, 21 saves of a
+  256 KiB document reused nothing at all, and one edited line added a complete second copy. At a
+  64 KiB average the same edit adds about a fifth as much, an 8 MiB document edited 20 times drops
+  from 14.7 MiB to 3.9 MiB, and a single capture of mixed real data is ~9% smaller too, because
+  smaller chunks find duplicate content that 1 MiB chunks straddled.
+- **Compression moved from Deflate's weakest level to its balanced one.** On document-like text
+  that is close to half the size (48.6 MiB → 27.5 MiB in one measurement). Capture speed is
+  unaffected in practice because a chunk that already exists is never re-compressed — the stronger
+  setting is only paid on genuinely new bytes.
+- Neither change alters the on-disk format. A Deflate stream is self-describing, so the level is
+  an encoder-side choice and old blobs decode unchanged; and each version records its own chunk
+  list, so re-chunking cannot affect versions already written. No migration runs, and nothing is
+  re-encoded. The one real cost is transitional: for a while after updating, a file's new chunks
+  won't match its pre-update ones, so both are kept until retention expires the old versions.
+
+### Why not the other options
+
+Considered and deliberately rejected, so the reasoning survives: **pack files** (restic, borg and
+kopia all bundle small blobs into 4–32 MB packs) exist to avoid per-object latency and API charges
+on *remote* storage — StepWind's store is local, and packing would turn a trivially crash-safe
+"delete the file" garbage collector into repack-and-compact. **zstd** is the modern default codec,
+but its advantage here is speed rather than ratio, and on this data it is within ~1% of the Deflate
+level now in use, which needs no new dependency inside a SYSTEM service. **A 16 KiB average** was
+measured too: index growth and per-file disk slack cancel the extra dedup while doubling the chunk
+count.
+
 ## 1.0.1 — 2026-07-25
 
 Two fixes worth shipping on their own, plus the installer wearing the product's own face. Everyone

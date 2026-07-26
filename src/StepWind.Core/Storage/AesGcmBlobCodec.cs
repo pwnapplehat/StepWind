@@ -41,7 +41,10 @@ public sealed class AesGcmBlobCodec : IBlobCodec
         byte[] compressed;
         using (var buffer = new MemoryStream())
         {
-            using (var deflate = new DeflateStream(buffer, CompressionLevel.Fastest, leaveOpen: true))
+            // Optimal, matching GzipBlobCodec — see the note there. Compressing BEFORE encrypting is
+            // the only order that works: ciphertext is indistinguishable from noise and will not
+            // compress at all.
+            using (var deflate = new DeflateStream(buffer, CompressionLevel.Optimal, leaveOpen: true))
             {
                 deflate.Write(plaintext);
             }

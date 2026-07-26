@@ -13,17 +13,24 @@ public sealed class VersionStore
 {
     private readonly BlobStore _blobs;
     private readonly VersionLog _log;
-    private readonly FastCdc _chunker = new();
+    private readonly FastCdc _chunker;
 
     // Serializes a capture's write-blobs→append-version sequence against maintenance (GC).
     // Without this, retention's mark-and-sweep could delete a blob a capture just Put but
     // hasn't yet referenced in the log — a use-after-free that would corrupt a later restore.
     private readonly object _maintenanceGate = new();
 
-    public VersionStore(BlobStore blobs, VersionLog log)
+    /// <param name="chunker">
+    /// Override the chunk-size parameters. Production always uses the defaults; this exists so
+    /// tests can write a store with DIFFERENT parameters and prove those versions still restore
+    /// byte-exact afterwards — the property that makes changing the defaults safe for people who
+    /// already have history.
+    /// </param>
+    public VersionStore(BlobStore blobs, VersionLog log, FastCdc? chunker = null)
     {
         _blobs = blobs;
         _log = log;
+        _chunker = chunker ?? new FastCdc();
     }
 
     public VersionLog Log => _log;
@@ -33,8 +40,9 @@ public sealed class VersionStore
     /// <summary>
     /// Captures the current content of <paramref name="sourcePath"/> as a new version under
     /// <paramref name="relativePath"/>. Streams the file through the chunker ONE chunk at a time,
-    /// storing each immediately, so peak memory is a single chunk (~tens of KB) no matter how
-    /// large the file — a multi-GB file never sits in RAM inside the SYSTEM service. Deduplicates
+    /// storing each immediately, so peak memory is the chunker's sliding window (twice the maximum
+    /// chunk size, half a megabyte) no matter how large the file — a multi-GB file never sits in
+    /// RAM inside the SYSTEM service. Deduplicates
     /// at two levels: an already-present chunk is a no-op write (content-addressed), and if the
     /// resulting chunk list matches the file's most recent version, no new version is recorded.
     /// Returns the recorded (or unchanged existing) version.

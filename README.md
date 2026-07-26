@@ -76,7 +76,9 @@ skill-capable tools can copy the same skill from the manual-setup card.
 ## Built right from day one
 
 - **Content-defined chunking + dedup** so history is cheap even for huge files, and identical
-  re-saves don't add redundant versions.
+  re-saves don't add redundant versions. Chunk sizes are tuned for the workload StepWind actually
+  has — the same documents saved over and over — so editing one line adds one line's worth of
+  storage, not another copy of the file.
 - **Crash-safe, content-verified store** (atomic writes; every chunk re-hashed on read; GC is
   serialized against captures so it can never sweep an in-flight chunk).
 - **Encryption at rest is a live toggle** (AES-256-GCM, key sealed by Windows DPAPI at machine
@@ -172,7 +174,7 @@ tests/                 deterministic Core tests
 
 ## Verified
 
-- **294 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
+- **300 unit tests** — chunker determinism & shift-resistance, store dedup/crash-safety/
   integrity, encryption round-trip & tamper rejection, DPAPI key stability, live encryption
   toggling (mixed-store reads, background re-encode convergence in both directions,
   interrupted-migration recovery, storage byte tracking, the IPC toggle end-to-end), USN
