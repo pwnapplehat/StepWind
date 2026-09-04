@@ -16,26 +16,79 @@
 
 const pending = new Map();
 let nextMsgId = 1;
+/* The JSON bridge exists only inside the WebView2 host. A browser preview of this folder
+   (docs/LINUX.md) has no host — reject instead of throwing on window.chrome.webview.
+   `?preview=diff` is a layout fixture only (never used by the packaged app, which loads
+   https://app.stepwind/index.html with no query). */
+const HAS_BRIDGE = !!(window.chrome && window.chrome.webview);
+const PREVIEW_DIFF = new URLSearchParams(location.search).get("preview") === "diff";
+
+function previewCall(method) {
+  const now = "2026-09-04T12:00:00.000Z";
+  const en = "Once upon a time there was a novelist who wrote sentences that ran far past the right edge of any editor window and refused to wrap, which made comparing versions of a chapter almost impossible without a horizontal scrollbar.";
+  const ja = "むかしむかしあるところに、改行をほとんど入れずに原稿用紙いっぱいに書き続ける小説家がいて、差分表示の右端で折り返されないと一行が画面の外へ消えてしまい、どこを直したのかほとんど読めなかった。";
+  switch (method) {
+    case "chromeTheme": return {};
+    case "status": return { CapturePaused: false, WatchedRoots: 1, TotalVersions: 2, StoreBytes: 4096 };
+    case "settings": return { WatchedFolders: ["C:\\Users\\Sahil\\Documents"], TimelineProtectedOnly: false, FirstRunCompleted: true };
+    case "timeline": return [];
+    case "browse": return [{
+      Name: "novel.txt", RelativePath: "novel.txt", IsFolder: false,
+      FileCount: 0, VersionCount: 2, LastCapturedUtc: now,
+    }];
+    case "history": return [{
+      VersionId: "preview|1", CapturedUtc: now, Size: 2048, Reason: "save",
+      RelativePath: "novel.txt", GitRef: null,
+    }];
+    case "diff": return {
+      Binary: false,
+      Diff: [
+        "--- a/novel.txt",
+        "+++ b/novel.txt",
+        "@@ -1,3 +1,3 @@",
+        "-" + en,
+        "+" + en + " The next draft added one more clause.",
+        "-" + ja,
+        "+" + ja + "次の稿では一文だけ足した。",
+        "+a short line",
+      ].join("\n"),
+    };
+    case "pickFile": return "novel.txt";
+    default: return undefined;
+  }
+}
 
 function call(method, params = {}) {
   return new Promise((resolve, reject) => {
+    if (PREVIEW_DIFF) {
+      const data = previewCall(method);
+      if (data === undefined) reject(new Error("bridge unavailable"));
+      else resolve(data);
+      return;
+    }
+    if (!HAS_BRIDGE) {
+      reject(new Error("bridge unavailable"));
+      return;
+    }
     const id = nextMsgId++;
     pending.set(id, { resolve, reject });
     window.chrome.webview.postMessage({ id, method, params });
   });
 }
 
-window.chrome.webview.addEventListener("message", (e) => {
-  const msg = e.data;
-  if (msg && msg.type === "winstate") {
-    document.body.classList.toggle("maximized", !!msg.maximized);
-    return;
-  }
-  const p = pending.get(msg.id);
-  if (!p) return;
-  pending.delete(msg.id);
-  msg.ok ? p.resolve(msg.data) : p.reject(new Error(msg.error || "bridge error"));
-});
+if (HAS_BRIDGE) {
+  window.chrome.webview.addEventListener("message", (e) => {
+    const msg = e.data;
+    if (msg && msg.type === "winstate") {
+      document.body.classList.toggle("maximized", !!msg.maximized);
+      return;
+    }
+    const p = pending.get(msg.id);
+    if (!p) return;
+    pending.delete(msg.id);
+    msg.ok ? p.resolve(msg.data) : p.reject(new Error(msg.error || "bridge error"));
+  });
+}
 
 /* ═══════════════ Helpers ═══════════════ */
 
@@ -559,6 +612,97 @@ const filesState = {
   historyPath: null, history: [], historyFp: "", selectedVersion: null,
 };
 
+/* Diff wrap defaults ON (long novel / CJK lines). Folder-list width and collapse are
+   presentation prefs in this WebView's localStorage — same store as the theme. */
+const DIFF_WRAP_KEY = "stepwind.diffWrap";
+const FILES_COLLAPSED_KEY = "stepwind.filesListCollapsed";
+const FILES_SPLIT_KEY = "stepwind.filesSplit";
+
+function diffWrapOn() {
+  return localStorage.getItem(DIFF_WRAP_KEY) !== "0";
+}
+
+function filesListCollapsed() {
+  return localStorage.getItem(FILES_COLLAPSED_KEY) === "1";
+}
+
+function filesSplitPct() {
+  const n = parseFloat(localStorage.getItem(FILES_SPLIT_KEY) || "");
+  return Number.isFinite(n) ? Math.min(0.68, Math.max(0.22, n)) : 0.42;
+}
+
+function applyDiffWrap() {
+  const box = $("#diff-box");
+  if (box) box.classList.toggle("wrap", diffWrapOn());
+  const btn = $("#h-wrap");
+  if (!btn) return;
+  const on = diffWrapOn();
+  btn.classList.toggle("pressed", on);
+  btn.setAttribute("aria-pressed", on ? "true" : "false");
+  btn.title = on
+    ? "Wrap is on — long lines stay inside the pane. Click for one line per hunk (horizontal scroll)."
+    : "Wrap is off — long lines overflow. Click to wrap at the edge of the diff.";
+}
+
+function applyFilesLayout() {
+  const grid = $("#files-grid");
+  if (!grid) return;
+  const collapsed = filesListCollapsed();
+  grid.classList.toggle("collapsed", collapsed);
+  grid.style.setProperty("--files-browse-w", (filesSplitPct() * 100).toFixed(2) + "%");
+  const btn = $("#f-folders");
+  if (!btn) return;
+  btn.classList.toggle("pressed", collapsed);
+  btn.setAttribute("aria-pressed", collapsed ? "true" : "false");
+  btn.title = collapsed
+    ? "Show the folder list"
+    : "Hide the folder list so the diff can use the full width";
+  const label = btn.querySelector("[data-folders-label]");
+  if (label) label.textContent = collapsed ? "Show folders" : "Hide folders";
+}
+
+function setDiffWrap(on) {
+  localStorage.setItem(DIFF_WRAP_KEY, on ? "1" : "0");
+  applyDiffWrap();
+}
+
+function setFilesCollapsed(on) {
+  localStorage.setItem(FILES_COLLAPSED_KEY, on ? "1" : "0");
+  applyFilesLayout();
+}
+
+function bindFilesSplit(split) {
+  if (!split) return;
+  split.onpointerdown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const grid = $("#files-grid");
+    if (!grid || filesListCollapsed()) return;
+    split.classList.add("dragging");
+    split.setPointerCapture(e.pointerId);
+    const move = (ev) => {
+      const rect = grid.getBoundingClientRect();
+      const splitW = split.getBoundingClientRect().width;
+      const minBrowse = 200;
+      const minHist = 280;
+      const maxBrowse = Math.max(minBrowse, rect.width - minHist - splitW);
+      const browse = Math.min(maxBrowse, Math.max(minBrowse, ev.clientX - rect.left));
+      localStorage.setItem(FILES_SPLIT_KEY, String(browse / rect.width));
+      applyFilesLayout();
+    };
+    const up = () => {
+      split.classList.remove("dragging");
+      split.onpointermove = null;
+      split.onpointerup = null;
+      split.onpointercancel = null;
+    };
+    split.onpointermove = move;
+    split.onpointerup = up;
+    split.onpointercancel = up;
+    move(e);
+  };
+}
+
 function filesCrumbsHtml() {
   const parts = filesState.path ? filesState.path.split("/") : [];
   let html = `<span class="fc ${parts.length ? "" : "here"}" data-p="">Home</span>`;
@@ -582,14 +726,18 @@ function renderFilesScaffold() {
         <div class="page-sub">Browse protected folders, open any file's history, and see exactly what changed between versions.</div>
       </div>
       <div class="page-actions">
+        <button class="btn" id="f-folders" type="button">
+          <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
+          <span data-folders-label>Hide folders</span>
+        </button>
         <button class="btn" id="f-openfile">
           <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/></svg>
           Open a file…
         </button>
       </div>
     </div>
-    <div class="files-grid">
-      <div class="card files-pane">
+    <div class="files-grid" id="files-grid">
+      <div class="card files-pane" id="files-browse">
         <div class="input-wrap" style="margin-bottom:8px">
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
           <input class="input" id="f-search" placeholder="Search this folder and everything under it…"/>
@@ -597,8 +745,13 @@ function renderFilesScaffold() {
         <div class="files-crumbs" id="f-crumbs"></div>
         <div class="files-list" id="f-list"></div>
       </div>
+      <div class="files-split" id="files-split" role="separator" aria-orientation="vertical" aria-label="Resize the folder list" title="Drag to resize"></div>
       <div class="card files-pane" id="hist-pane"></div>
     </div>`;
+
+  $("#f-folders", host).onclick = () => setFilesCollapsed(!filesListCollapsed());
+  bindFilesSplit($("#files-split", host));
+  applyFilesLayout();
 
   $("#f-openfile", host).onclick = async () => {
     const path = await call("pickFile");
@@ -701,6 +854,10 @@ function renderHistoryPane(animate = false) {
         <div class="hist-path">${esc(st.historyPath)}</div>
       </div>
       <div class="hist-toolbar">
+        <button class="btn" id="h-wrap" type="button">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h13a3 3 0 0 1 0 6h-9"/><path d="m10 14-2 2 2 2"/></svg>
+          Wrap
+        </button>
         <button class="btn danger-ghost" id="h-delete" title="Delete every saved version of this file (the file on disk is not touched)">
           <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
         </button>
@@ -721,6 +878,8 @@ function renderHistoryPane(animate = false) {
       <div class="diff-note">Select a version above to see what changed between it and the file on disk now.</div>
     </div>`;
 
+  $("#h-wrap", pane).onclick = () => setDiffWrap(!diffWrapOn());
+  applyDiffWrap();
   $("#h-delete", pane).onclick = deleteFileHistory;
   $$(".v-row", pane).forEach((r, i) => {
     if (animate) stagger(r, i);
@@ -1479,6 +1638,10 @@ async function patchAndReload(patch, reload) {
 const PALETTE_COMMANDS = [
   { label: "Go to Timeline", hint: "view", run: () => navigate("timeline") },
   { label: "Go to File versions", hint: "view", run: () => navigate("files") },
+  { label: "Wrap long lines in the version diff", hint: "view", run: () => { navigate("files"); setDiffWrap(true); } },
+  { label: "Don't wrap lines in the version diff", hint: "view", run: () => { navigate("files"); setDiffWrap(false); } },
+  { label: "Hide the folder list in File versions", hint: "view", run: () => { navigate("files"); setFilesCollapsed(true); } },
+  { label: "Show the folder list in File versions", hint: "view", run: () => { navigate("files"); setFilesCollapsed(false); } },
   { label: "Go to Protected folders", hint: "view", run: () => navigate("folders") },
   { label: "Go to AI agents", hint: "view", run: () => navigate("agents") },
   { label: "Go to Settings", hint: "view", run: () => navigate("settings") },
@@ -1563,7 +1726,18 @@ const VIEW_LOADERS = {
     firstRunDone = s?.FirstRunCompleted !== false;
   } catch { }
   setInterval(liveTick, 3000);
-  navigate("timeline");
+  if (PREVIEW_DIFF) {
+    navigate("files");
+    await openHistoryByPath("novel.txt");
+    const v = filesState.history[0];
+    if (v) {
+      filesState.selectedVersion = v.VersionId;
+      renderHistoryPane(false);
+      await showDiff(v);
+    }
+  } else {
+    navigate("timeline");
+  }
 
   // First run: explicit onboarding instead of silently grabbing folders. Only when the service
   // is reachable, nothing is protected yet, and no human has made a folder choice before.

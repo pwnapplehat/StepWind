@@ -4,11 +4,20 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+### Changed
+- **File versions: long lines wrap at the edge of the diff** by default (prose and CJK
+  with no spaces). Toggle **Wrap** in the history toolbar; the choice is remembered in this
+  app's localStorage. Turn wrap off for the classic one-line-per-hunk view.
+- **File versions: the folder list can be hidden or resized** so the diff can use the full
+  pane. **Hide folders** in the page header, or drag the splitter between the two sides.
+  Both are remembered. The diff is still a unified diff (not a stacked old/new split).
+
 ### Changed (docs)
 - Documented the Linux/Ubuntu loop (`docs/LINUX.md`): GitHub Actions `windows-latest`
   already builds, tests, and on a `v*` tag publishes both installers + `SHA256SUMS.txt`.
   Small changes do not need a local Windows machine; the web UI under `src/StepWind.App/web`
-  can be previewed in a browser on Linux.
+  can be previewed in a browser on Linux (the service bridge is absent, so history/diffs
+  stay empty until Windows).
 
 ## 1.0.2 — 2026-07-26
 

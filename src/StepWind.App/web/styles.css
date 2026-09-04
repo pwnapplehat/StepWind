@@ -316,6 +316,11 @@ body {
 }
 .btn.primary:hover { filter: brightness(1.12); }
 .btn.danger-ghost:hover { color: var(--danger-text); border-color: rgba(251, 113, 133, 0.4); }
+.btn.pressed {
+  color: var(--text);
+  border-color: rgba(99, 102, 241, 0.45);
+  background: rgba(99, 102, 241, 0.14);
+}
 
 .card {
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-lg);
@@ -474,7 +479,36 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
 
 /* ═══════════════ Files (browser + history + diff) ═══════════════ */
 
-.files-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(320px, 5fr) minmax(380px, 6fr); gap: 16px; }
+.files-grid {
+  flex: 1; min-height: 0;
+  display: flex; align-items: stretch; gap: 0;
+  --files-browse-w: 42%;
+}
+#files-browse {
+  width: var(--files-browse-w);
+  min-width: 200px;
+  flex-shrink: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.files-split {
+  width: 14px; flex-shrink: 0; cursor: col-resize;
+  position: relative; app-region: no-drag;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+}
+.files-split::after {
+  content: ""; position: absolute; top: 18%; bottom: 18%; left: 5px; width: 4px;
+  border-radius: 99px; background: var(--line);
+  transition: background 0.14s var(--ease);
+}
+.files-split:hover::after, .files-split.dragging::after {
+  background: var(--indigo-2);
+}
+.files-grid.collapsed #files-browse,
+.files-grid.collapsed .files-split { display: none; }
+#hist-pane { flex: 1; min-width: 0; }
 .files-pane { display: flex; flex-direction: column; min-height: 0; padding: 14px; }
 .files-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .files-crumbs { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 12px; padding: 2px 2px 10px; }
@@ -539,6 +573,17 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
   user-select: text; cursor: text;
 }
 .diff-box .dl { padding: 0 14px; white-space: pre; }
+/* Wrap is the default: long novel sentences (and CJK with no spaces) stay inside the pane
+   instead of forcing a horizontal scrollbar. Toggle off for classic one-line-per-hunk diffs. */
+.diff-box.wrap {
+  overflow-x: hidden;
+}
+.diff-box.wrap .dl {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-break: anywhere;
+}
 .diff-box .dl.add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
 .diff-box .dl.del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
 .diff-box .dl.hunk { color: var(--accent-text); background: rgba(34, 211, 238, 0.06); padding-top: 5px; padding-bottom: 5px; }
