@@ -2,6 +2,14 @@
 
 All notable changes to StepWind are documented here.
 
+## Unreleased
+
+### Changed (docs)
+- Documented the Linux/Ubuntu loop (`docs/LINUX.md`): GitHub Actions `windows-latest`
+  already builds, tests, and on a `v*` tag publishes both installers + `SHA256SUMS.txt`.
+  Small changes do not need a local Windows machine; the web UI under `src/StepWind.App/web`
+  can be previewed in a browser on Linux.
+
 ## 1.0.2 — 2026-07-26
 
 **History now takes about a quarter of the disk it used to, at the same capture speed.** Measured

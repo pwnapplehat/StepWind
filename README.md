@@ -242,6 +242,13 @@ install rather than run silently). Found something? Open a
 
 ## Building
 
+WPF / `net10.0-windows` cannot compile on Linux. From Ubuntu, push to `main` and let
+GitHub Actions (`windows-latest`) build, test, pack the installer, and — on a `v*` tag —
+publish the GitHub Release. The HTML/CSS/JS UI under `src/StepWind.App/web/` can be
+previewed in a browser on Linux. See [docs/LINUX.md](docs/LINUX.md).
+
+On Windows:
+
 ```powershell
 dotnet build StepWind.slnx      # build everything
 dotnet test                     # Core test suite
@@ -249,7 +256,7 @@ dotnet test                     # Core test suite
 iscc installer\stepwind.iss     # build the setup .exe → installer/Output/
 ```
 
-Requires the .NET 10 SDK (and Inno Setup 6 for the installer).
+Requires the .NET 10 SDK (and Inno Setup 6 for a local installer).
 
 ## License
 
