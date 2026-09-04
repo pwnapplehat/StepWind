@@ -742,7 +742,7 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
 .badge-live::before { content: ""; width: 7px; height: 7px; border-radius: 99px; background: var(--accent-text); animation: pulse 2s var(--ease) infinite; }
 
 .switch { cursor: pointer; }
-.hist-toolbar { display: flex; gap: 8px; margin-left: auto; }
+.hist-toolbar { display: flex; gap: 8px; margin-left: auto; flex-shrink: 0; }
 .seg { display: flex; gap: 6px; margin-left: auto; }
 
 /* Segmented pill (Theme: System/Light/Dark) */

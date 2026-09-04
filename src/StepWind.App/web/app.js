@@ -695,10 +695,12 @@ function bindFilesSplit(split) {
       split.onpointermove = null;
       split.onpointerup = null;
       split.onpointercancel = null;
+      split.onlostpointercapture = null;
     };
     split.onpointermove = move;
     split.onpointerup = up;
     split.onpointercancel = up;
+    split.onlostpointercapture = up;
     move(e);
   };
 }
@@ -893,6 +895,10 @@ function renderHistoryPane(animate = false) {
     };
   });
   $$(".v-restore", pane).forEach((b) => (b.onclick = () => restoreVersion(b)));
+  const selected = st.selectedVersion
+    ? st.history.find((x) => x.VersionId === st.selectedVersion)
+    : null;
+  if (selected) showDiff(selected);
 }
 
 async function openHistoryByPath(relativeOrAbsolutePath) {
@@ -969,11 +975,18 @@ function renderDiffText(diffText) {
   }).join("");
 }
 
+let diffGen = 0;
+
 async function showDiff(version) {
   const box = $("#diff-box");
+  if (!box || !version) return;
+  const gen = ++diffGen;
+  const stale = () => gen !== diffGen || $("#diff-box") !== box;
   box.innerHTML = `<div class="skeleton" style="height:120px;margin:12px"></div>`;
+  applyDiffWrap();
   try {
     const d = await call("diff", { oldSel: version.VersionId, newSel: "current:" + version.RelativePath });
+    if (stale()) return;
     box.innerHTML = d.Binary
       ? `<div class="diff-note">Binary content — no text diff. (${fmtSize(d.OldSize)} → ${fmtSize(d.NewSize)})</div>`
       : renderDiffText(d.Diff || "(no differences)");
@@ -981,15 +994,18 @@ async function showDiff(version) {
     // The live file may be deleted — show the version's own content instead.
     try {
       const c = await call("read", { selector: version.VersionId });
+      if (stale()) return;
       box.innerHTML =
         `<div class="diff-note">The live file isn't on disk right now — showing this saved version's content.</div>` +
         (c.Content != null
           ? c.Content.split("\n").map((l) => `<div class="dl">${esc(l) || " "}</div>`).join("")
           : `<div class="diff-note">${c.IsBinary ? "Binary content." : "Too large to preview."}</div>`);
     } catch (err2) {
+      if (stale()) return;
       box.innerHTML = `<div class="diff-note">${esc(err2.message)}</div>`;
     }
   }
+  applyDiffWrap();
 }
 
 function loadFiles() {
@@ -1733,7 +1749,6 @@ const VIEW_LOADERS = {
     if (v) {
       filesState.selectedVersion = v.VersionId;
       renderHistoryPane(false);
-      await showDiff(v);
     }
   } else {
     navigate("timeline");

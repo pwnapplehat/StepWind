@@ -3,7 +3,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.0.2</Version>
+    <Version>1.0.3</Version>
     <Product>StepWind</Product>
     <Authors>StepWind Contributors</Authors>
     <Company>StepWind Contributors</Company>

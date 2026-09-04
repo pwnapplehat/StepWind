@@ -4,13 +4,20 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+## 1.0.3 — 2026-09-04
+
+**The Version History diff is readable for long-form writing.** Long novel lines wrap at the
+edge of the pane — including Japanese with no spaces — instead of running off the right side.
+Hide the folder list or drag the splitter when you want the extra width. The diff is still a
+unified diff (not a stacked old/new split); wrap, hide, and the split are remembered.
+
 ### Changed
-- **File versions: long lines wrap at the edge of the diff** by default (prose and CJK
-  with no spaces). Toggle **Wrap** in the history toolbar; the choice is remembered in this
-  app's localStorage. Turn wrap off for the classic one-line-per-hunk view.
+- **File versions: long lines wrap at the edge of the diff** by default. Toggle **Wrap** in
+  the history toolbar. Turn wrap off for the classic one-line-per-hunk view.
 - **File versions: the folder list can be hidden or resized** so the diff can use the full
   pane. **Hide folders** in the page header, or drag the splitter between the two sides.
-  Both are remembered. The diff is still a unified diff (not a stacked old/new split).
+- A 3-second history refresh no longer wipes a diff you were reading. Switching versions
+  mid-load no longer paints the previous request into the pane.
 
 ### Changed (docs)
 - Documented the Linux/Ubuntu loop (`docs/LINUX.md`): GitHub Actions `windows-latest`
