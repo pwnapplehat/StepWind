@@ -4,6 +4,11 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+### Changed
+- **File versions: the version list and the diff each have their own width.** They sit side
+  by side with a drag splitter between them (the folder list still has its own splitter, or
+  **Hide folders**). Wrap stays on the diff pane. All three widths and wrap/hide are remembered.
+
 ## 1.0.3 — 2026-09-04
 
 **The Version History diff is readable for long-form writing.** Long novel lines wrap at the

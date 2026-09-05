@@ -21,9 +21,9 @@ Watch [Actions](https://github.com/pwnapplehat/StepWind/actions). Preview the we
 ```bash
 python3 -m http.server 8124 --directory src/StepWind.App/web
 # open http://localhost:8124/  (bridge calls fail — expected off Windows)
-# File versions still paints: Hide folders, drag the splitter (empty diff until Windows).
+# File versions still paints: Hide folders, drag both splitters (empty diff until Windows).
 # Sample novel-length EN+JA wrap fixture (not used by the packaged app):
-#   http://localhost:8124/?preview=diff
+#   http://localhost:8124/?preview=diff  — folders | version list | wrapped diff
 ```
 
 ## Shipping a release (no local Windows)

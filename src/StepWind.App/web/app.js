@@ -611,12 +611,18 @@ const filesState = {
   path: "", query: "", entries: [], browseFp: "",
   historyPath: null, history: [], historyFp: "", selectedVersion: null,
 };
+let diffGen = 0;
 
-/* Diff wrap defaults ON (long novel / CJK lines). Folder-list width and collapse are
-   presentation prefs in this WebView's localStorage — same store as the theme. */
+/* Diff wrap defaults ON (long novel / CJK lines). Column widths and folder-list collapse
+   are presentation prefs in this WebView's localStorage — same store as the theme. */
 const DIFF_WRAP_KEY = "stepwind.diffWrap";
 const FILES_COLLAPSED_KEY = "stepwind.filesListCollapsed";
 const FILES_SPLIT_KEY = "stepwind.filesSplit";
+const HIST_SPLIT_KEY = "stepwind.histSplit";
+const SPLIT_PX = 14;
+const MIN_BROWSE_PX = 200;
+const MIN_HIST_PX = 200;
+const MIN_DIFF_PX = 280;
 
 function diffWrapOn() {
   return localStorage.getItem(DIFF_WRAP_KEY) !== "0";
@@ -626,9 +632,16 @@ function filesListCollapsed() {
   return localStorage.getItem(FILES_COLLAPSED_KEY) === "1";
 }
 
+function clampPct(n, lo, hi, fallback) {
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
+}
+
 function filesSplitPct() {
-  const n = parseFloat(localStorage.getItem(FILES_SPLIT_KEY) || "");
-  return Number.isFinite(n) ? Math.min(0.68, Math.max(0.22, n)) : 0.42;
+  return clampPct(parseFloat(localStorage.getItem(FILES_SPLIT_KEY) || ""), 0.16, 0.55, 0.30);
+}
+
+function histSplitPct() {
+  return clampPct(parseFloat(localStorage.getItem(HIST_SPLIT_KEY) || ""), 0.16, 0.55, 0.28);
 }
 
 function applyDiffWrap() {
@@ -648,15 +661,18 @@ function applyFilesLayout() {
   const grid = $("#files-grid");
   if (!grid) return;
   const collapsed = filesListCollapsed();
+  const hasFile = !!filesState.historyPath;
   grid.classList.toggle("collapsed", collapsed);
+  grid.classList.toggle("no-file", !hasFile);
   grid.style.setProperty("--files-browse-w", (filesSplitPct() * 100).toFixed(2) + "%");
+  grid.style.setProperty("--files-hist-w", (histSplitPct() * 100).toFixed(2) + "%");
   const btn = $("#f-folders");
   if (!btn) return;
   btn.classList.toggle("pressed", collapsed);
   btn.setAttribute("aria-pressed", collapsed ? "true" : "false");
   btn.title = collapsed
     ? "Show the folder list"
-    : "Hide the folder list so the diff can use the full width";
+    : "Hide the folder list so the version list and diff can use the extra width";
   const label = btn.querySelector("[data-folders-label]");
   if (label) label.textContent = collapsed ? "Show folders" : "Hide folders";
 }
@@ -671,23 +687,34 @@ function setFilesCollapsed(on) {
   applyFilesLayout();
 }
 
-function bindFilesSplit(split) {
+function bindColSplit(split, kind) {
   if (!split) return;
   split.onpointerdown = (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
     const grid = $("#files-grid");
-    if (!grid || filesListCollapsed()) return;
+    if (!grid) return;
+    if (kind === "browse" && filesListCollapsed()) return;
+    if (kind === "hist" && !filesState.historyPath) return;
     split.classList.add("dragging");
     split.setPointerCapture(e.pointerId);
     const move = (ev) => {
       const rect = grid.getBoundingClientRect();
-      const splitW = split.getBoundingClientRect().width;
-      const minBrowse = 200;
-      const minHist = 280;
-      const maxBrowse = Math.max(minBrowse, rect.width - minHist - splitW);
-      const browse = Math.min(maxBrowse, Math.max(minBrowse, ev.clientX - rect.left));
-      localStorage.setItem(FILES_SPLIT_KEY, String(browse / rect.width));
+      if (kind === "browse") {
+        const reserved = MIN_DIFF_PX + SPLIT_PX
+          + (filesState.historyPath ? MIN_HIST_PX + SPLIT_PX : 0);
+        const maxBrowse = Math.max(MIN_BROWSE_PX, rect.width - reserved);
+        const browse = Math.min(maxBrowse, Math.max(MIN_BROWSE_PX, ev.clientX - rect.left));
+        localStorage.setItem(FILES_SPLIT_KEY, String(browse / rect.width));
+      } else {
+        const browseEl = $("#files-browse");
+        const browseW = filesListCollapsed() || !browseEl ? 0 : browseEl.getBoundingClientRect().width;
+        const leftSplit = filesListCollapsed() ? 0 : SPLIT_PX;
+        const histLeft = rect.left + browseW + leftSplit;
+        const maxHist = Math.max(MIN_HIST_PX, rect.right - MIN_DIFF_PX - SPLIT_PX - histLeft);
+        const hist = Math.min(maxHist, Math.max(MIN_HIST_PX, ev.clientX - histLeft));
+        localStorage.setItem(HIST_SPLIT_KEY, String(hist / rect.width));
+      }
       applyFilesLayout();
     };
     const up = () => {
@@ -705,6 +732,14 @@ function bindFilesSplit(split) {
   };
 }
 
+function resetDiffBox(note) {
+  const box = $("#diff-box");
+  if (!box) return;
+  diffGen++;
+  box.innerHTML = `<div class="diff-note">${note}</div>`;
+  applyDiffWrap();
+}
+
 function filesCrumbsHtml() {
   const parts = filesState.path ? filesState.path.split("/") : [];
   let html = `<span class="fc ${parts.length ? "" : "here"}" data-p="">Home</span>`;
@@ -717,8 +752,9 @@ function filesCrumbsHtml() {
   return html;
 }
 
-/* Builds the static two-pane scaffold once per navigation; list/history render separately
-   so the 3s refresh can update one side without clobbering the other (or the diff). */
+/* Builds the static three-pane scaffold once per navigation: folders | versions | diff.
+   List/history/diff render separately so the 3s refresh can update one side without
+   clobbering the others. */
 function renderFilesScaffold() {
   const host = $("#view-files");
   host.innerHTML = `
@@ -747,12 +783,30 @@ function renderFilesScaffold() {
         <div class="files-crumbs" id="f-crumbs"></div>
         <div class="files-list" id="f-list"></div>
       </div>
-      <div class="files-split" id="files-split" role="separator" aria-orientation="vertical" aria-label="Resize the folder list" title="Drag to resize"></div>
+      <div class="files-split" id="files-split" role="separator" aria-orientation="vertical" aria-label="Resize the folder list" title="Drag to resize the folder list"></div>
       <div class="card files-pane" id="hist-pane"></div>
+      <div class="files-split" id="diff-split" role="separator" aria-orientation="vertical" aria-label="Resize the version list" title="Drag to resize the version list and the diff"></div>
+      <div class="card files-pane" id="diff-pane">
+        <div class="diff-head">
+          <div class="hist-title">Diff</div>
+          <div class="hist-toolbar">
+            <button class="btn" id="h-wrap" type="button">
+              <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h13a3 3 0 0 1 0 6h-9"/><path d="m10 14-2 2 2 2"/></svg>
+              Wrap
+            </button>
+          </div>
+        </div>
+        <div class="diff-box" id="diff-box">
+          <div class="diff-note">Select a version to see what changed between it and the file on disk now.</div>
+        </div>
+      </div>
     </div>`;
 
   $("#f-folders", host).onclick = () => setFilesCollapsed(!filesListCollapsed());
-  bindFilesSplit($("#files-split", host));
+  bindColSplit($("#files-split", host), "browse");
+  bindColSplit($("#diff-split", host), "hist");
+  $("#h-wrap", host).onclick = () => setDiffWrap(!diffWrapOn());
+  applyDiffWrap();
   applyFilesLayout();
 
   $("#f-openfile", host).onclick = async () => {
@@ -846,20 +900,18 @@ function renderHistoryPane(animate = false) {
       <div class="empty-title">Pick a file</div>
       Every saved version appears here — click a version to see exactly what changed, restore any of them, even after an overwrite or delete.
     </div></div>`;
+    resetDiffBox("Select a version to see what changed between it and the file on disk now.");
+    applyFilesLayout();
     return;
   }
 
   pane.innerHTML = `
-    <div class="hist-head" style="display:flex;align-items:flex-start">
+    <div class="hist-head">
       <div style="min-width:0">
         <div class="hist-title">Version history</div>
         <div class="hist-path">${esc(st.historyPath)}</div>
       </div>
       <div class="hist-toolbar">
-        <button class="btn" id="h-wrap" type="button">
-          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h13a3 3 0 0 1 0 6h-9"/><path d="m10 14-2 2 2 2"/></svg>
-          Wrap
-        </button>
         <button class="btn danger-ghost" id="h-delete" title="Delete every saved version of this file (the file on disk is not touched)">
           <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
         </button>
@@ -875,13 +927,9 @@ function renderHistoryPane(animate = false) {
           <span class="v-actions"><button class="btn v-restore" data-v="${esc(v.VersionId)}">Restore</button></span>
         </div>`).join("")
       : `<div class="empty" style="padding:24px"><div>No saved versions for this file yet.</div></div>`}
-    </div>
-    <div class="diff-box" id="diff-box">
-      <div class="diff-note">Select a version above to see what changed between it and the file on disk now.</div>
     </div>`;
 
-  $("#h-wrap", pane).onclick = () => setDiffWrap(!diffWrapOn());
-  applyDiffWrap();
+  applyFilesLayout();
   $("#h-delete", pane).onclick = deleteFileHistory;
   $$(".v-row", pane).forEach((r, i) => {
     if (animate) stagger(r, i);
@@ -899,12 +947,15 @@ function renderHistoryPane(animate = false) {
     ? st.history.find((x) => x.VersionId === st.selectedVersion)
     : null;
   if (selected) showDiff(selected);
+  else resetDiffBox("Select a version to see what changed between it and the file on disk now.");
 }
 
 async function openHistoryByPath(relativeOrAbsolutePath) {
   filesState.historyPath = relativeOrAbsolutePath;
   filesState.selectedVersion = null;
   filesState.historyFp = "";
+  applyFilesLayout();
+  resetDiffBox("Select a version to see what changed between it and the file on disk now.");
   await refreshHistory(false, true);
 }
 
@@ -974,8 +1025,6 @@ function renderDiffText(diffText) {
     return `<div class="dl ${cls}">${esc(l) || " "}</div>`;
   }).join("");
 }
-
-let diffGen = 0;
 
 async function showDiff(version) {
   const box = $("#diff-box");
@@ -1750,6 +1799,7 @@ const VIEW_LOADERS = {
       filesState.selectedVersion = v.VersionId;
       renderHistoryPane(false);
     }
+    document.documentElement.dataset.previewReady = "1";
   } else {
     navigate("timeline");
   }

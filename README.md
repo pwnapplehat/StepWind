@@ -140,8 +140,8 @@ protected folders. **File versions is a folder browser** with breadcrumbs and re
 search, paired with full version history and — because the web stack is genuinely better at
 this — an **inline unified diff viewer**: click any version to see exactly what changed
 against the file on disk now (or the version's own content if the file is gone). Long lines
-wrap at the pane edge by default (toggle **Wrap**); hide or drag-resize the folder list when
-you need the extra width. A **command
+wrap at the pane edge by default (toggle **Wrap**). The folder list, version list, and diff
+are three columns you can hide or drag-resize so long-form text gets the width it needs. A **command
 palette (Ctrl+K)** searches every command and every file in the version store. Views
 fade-and-rise, rows cascade in, the nav indicator glides, dialogs scale in, and the
 "protection active" dot has a gentle heartbeat.
