@@ -33,8 +33,8 @@ python3 -m http.server 8124 --directory src/StepWind.App/web
 2. Tag that version:
 
 ```bash
-git tag -a v1.0.4 -m "StepWind v1.0.4"
-git push origin v1.0.4
+git tag -a v1.0.5 -m "StepWind v1.0.5"
+git push origin v1.0.5
 ```
 
 3. CI already publishes `StepWind-<ver>-setup.exe`, `StepWind-<ver>-arm64-setup.exe`, and
