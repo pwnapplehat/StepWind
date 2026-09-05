@@ -637,11 +637,35 @@ function clampPct(n, lo, hi, fallback) {
 }
 
 function filesSplitPct() {
-  return clampPct(parseFloat(localStorage.getItem(FILES_SPLIT_KEY) || ""), 0.16, 0.55, 0.30);
+  return clampPct(parseFloat(localStorage.getItem(FILES_SPLIT_KEY) || ""), 0.08, 0.70, 0.30);
 }
 
 function histSplitPct() {
-  return clampPct(parseFloat(localStorage.getItem(HIST_SPLIT_KEY) || ""), 0.16, 0.55, 0.28);
+  return clampPct(parseFloat(localStorage.getItem(HIST_SPLIT_KEY) || ""), 0.08, 0.70, 0.28);
+}
+
+/* Pixel-fit folder + version columns into the grid for this pass only. Stored percentages
+   stay as the user left them — hide folders after a clamp must restore the wide version list. */
+function fitColumnWidths(gridW, collapsed, hasFile, browsePct, histPct) {
+  let outBrowse = collapsed ? 0 : browsePct;
+  let outHist = hasFile ? histPct : 0;
+  if (!(gridW > 0)) return { browsePct: outBrowse, histPct: outHist };
+  const splits = SPLIT_PX * ((collapsed ? 0 : 1) + (hasFile ? 1 : 0));
+  const budget = Math.max(0, gridW - splits - (hasFile ? MIN_DIFF_PX : 0));
+  let browsePx = collapsed ? 0 : Math.max(MIN_BROWSE_PX, browsePct * gridW);
+  let histPx = hasFile ? Math.max(MIN_HIST_PX, histPct * gridW) : 0;
+  if (browsePx + histPx > budget) {
+    let overflow = browsePx + histPx - budget;
+    if (hasFile) {
+      const shrinkHist = Math.min(overflow, Math.max(0, histPx - MIN_HIST_PX));
+      histPx -= shrinkHist;
+      overflow -= shrinkHist;
+    }
+    if (!collapsed && overflow > 0) browsePx = Math.max(MIN_BROWSE_PX, browsePx - overflow);
+  }
+  if (!collapsed) outBrowse = browsePx / gridW;
+  if (hasFile) outHist = histPx / gridW;
+  return { browsePct: outBrowse, histPct: outHist };
 }
 
 function applyDiffWrap() {
@@ -664,8 +688,11 @@ function applyFilesLayout() {
   const hasFile = !!filesState.historyPath;
   grid.classList.toggle("collapsed", collapsed);
   grid.classList.toggle("no-file", !hasFile);
-  grid.style.setProperty("--files-browse-w", (filesSplitPct() * 100).toFixed(2) + "%");
-  grid.style.setProperty("--files-hist-w", (histSplitPct() * 100).toFixed(2) + "%");
+
+  const fitted = fitColumnWidths(
+    grid.getBoundingClientRect().width, collapsed, hasFile, filesSplitPct(), histSplitPct());
+  grid.style.setProperty("--files-browse-w", (fitted.browsePct * 100).toFixed(2) + "%");
+  grid.style.setProperty("--files-hist-w", (fitted.histPct * 100).toFixed(2) + "%");
   const btn = $("#f-folders");
   if (!btn) return;
   btn.classList.toggle("pressed", collapsed);
@@ -687,6 +714,25 @@ function setFilesCollapsed(on) {
   applyFilesLayout();
 }
 
+let filesLayoutObs = null;
+
+function observeFilesGrid() {
+  if (filesLayoutObs) {
+    filesLayoutObs.disconnect();
+    filesLayoutObs = null;
+  }
+  const grid = $("#files-grid");
+  if (!grid || typeof ResizeObserver === "undefined") return;
+  let lastW = -1;
+  filesLayoutObs = new ResizeObserver((entries) => {
+    const w = entries[0] ? entries[0].contentRect.width : 0;
+    if (w === lastW) return;
+    lastW = w;
+    applyFilesLayout();
+  });
+  filesLayoutObs.observe(grid);
+}
+
 function bindColSplit(split, kind) {
   if (!split) return;
   split.onpointerdown = (e) => {
@@ -700,9 +746,12 @@ function bindColSplit(split, kind) {
     split.setPointerCapture(e.pointerId);
     const move = (ev) => {
       const rect = grid.getBoundingClientRect();
+      if (rect.width <= 0) return;
       if (kind === "browse") {
-        const reserved = MIN_DIFF_PX + SPLIT_PX
-          + (filesState.historyPath ? MIN_HIST_PX + SPLIT_PX : 0);
+        /* Diff is hidden until a file is open — don't reserve MIN_DIFF for an absent pane. */
+        const reserved = filesState.historyPath
+          ? MIN_DIFF_PX + SPLIT_PX + MIN_HIST_PX + SPLIT_PX
+          : MIN_HIST_PX + SPLIT_PX;
         const maxBrowse = Math.max(MIN_BROWSE_PX, rect.width - reserved);
         const browse = Math.min(maxBrowse, Math.max(MIN_BROWSE_PX, ev.clientX - rect.left));
         localStorage.setItem(FILES_SPLIT_KEY, String(browse / rect.width));
@@ -736,7 +785,7 @@ function resetDiffBox(note) {
   const box = $("#diff-box");
   if (!box) return;
   diffGen++;
-  box.innerHTML = `<div class="diff-note">${note}</div>`;
+  box.innerHTML = `<div class="diff-note">${esc(note)}</div>`;
   applyDiffWrap();
 }
 
@@ -808,6 +857,7 @@ function renderFilesScaffold() {
   $("#h-wrap", host).onclick = () => setDiffWrap(!diffWrapOn());
   applyDiffWrap();
   applyFilesLayout();
+  observeFilesGrid();
 
   $("#f-openfile", host).onclick = async () => {
     const path = await call("pickFile");
@@ -877,16 +927,21 @@ function renderBrowseList(animate = false) {
 }
 
 async function refreshBrowse(silent, animate = false) {
+  const path = filesState.path;
+  const query = filesState.query;
   try {
-    const data = (await call("browse", { path: filesState.path, query: filesState.query || null })) || [];
-    const fp = filesState.path + "\u0001" + filesState.query + "\u0001" + JSON.stringify(data);
+    const data = (await call("browse", { path, query: query || null })) || [];
+    if (filesState.path !== path || filesState.query !== query) return;
+    const fp = path + "\u0001" + query + "\u0001" + JSON.stringify(data);
     if (silent && fp === filesState.browseFp) return;
     filesState.browseFp = fp;
     filesState.entries = data;
   } catch {
     if (silent) return;
+    if (filesState.path !== path || filesState.query !== query) return;
     filesState.entries = [];
   }
+  if (filesState.path !== path || filesState.query !== query) return;
   renderBrowseList(animate);
 }
 
@@ -926,7 +981,7 @@ function renderHistoryPane(animate = false) {
           ${v.GitRef ? `<span class="v-git" title="Git branch/commit when saved">${esc(v.GitRef)}</span>` : ""}
           <span class="v-actions"><button class="btn v-restore" data-v="${esc(v.VersionId)}">Restore</button></span>
         </div>`).join("")
-      : `<div class="empty" style="padding:24px"><div>No saved versions for this file yet.</div></div>`}
+      : `<div class="empty" style="padding:24px"><div>${!st.historyFp ? "Loading versions…" : "No saved versions for this file yet."}</div></div>`}
     </div>`;
 
   applyFilesLayout();
@@ -936,6 +991,7 @@ function renderHistoryPane(animate = false) {
     r.onclick = (ev) => {
       if (ev.target.closest(".v-restore")) return;
       const v = st.history[+r.dataset.i];
+      if (!v) return;
       st.selectedVersion = v.VersionId;
       $$(".v-row", pane).forEach((x) => x.classList.remove("selected"));
       r.classList.add("selected");
@@ -953,26 +1009,33 @@ function renderHistoryPane(animate = false) {
 async function openHistoryByPath(relativeOrAbsolutePath) {
   filesState.historyPath = relativeOrAbsolutePath;
   filesState.selectedVersion = null;
+  filesState.history = [];
   filesState.historyFp = "";
   applyFilesLayout();
+  renderHistoryPane();
   resetDiffBox("Select a version to see what changed between it and the file on disk now.");
   await refreshHistory(false, true);
 }
 
 async function refreshHistory(silent, animate = false) {
   const st = filesState;
-  if (!st.historyPath) return;
+  const path = st.historyPath;
+  if (!path) return;
   try {
-    const data = (await call("history", { relativePath: st.historyPath })) || [];
-    const fp = st.historyPath + "\u0001" + JSON.stringify(data);
+    const data = (await call("history", { relativePath: path })) || [];
+    if (st.historyPath !== path) return;
+    const fp = path + "\u0001" + JSON.stringify(data);
     if (silent && fp === st.historyFp) return; // don't clobber selection/diff on the 3s tick
     st.historyFp = fp;
     st.history = data;
   } catch (err) {
     if (silent) return;
+    if (st.historyPath !== path) return;
     st.history = [];
+    st.historyFp = path + "\u0001";
     toast("err", "Couldn't load history", err.message);
   }
+  if (st.historyPath !== path) return;
   renderHistoryPane(animate);
 }
 

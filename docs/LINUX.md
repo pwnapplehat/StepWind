@@ -33,8 +33,8 @@ python3 -m http.server 8124 --directory src/StepWind.App/web
 2. Tag that version:
 
 ```bash
-git tag -a v1.0.5 -m "StepWind v1.0.5"
-git push origin v1.0.5
+git tag -a v1.0.4 -m "StepWind v1.0.4"
+git push origin v1.0.4
 ```
 
 3. CI already publishes `StepWind-<ver>-setup.exe`, `StepWind-<ver>-arm64-setup.exe`, and
@@ -50,5 +50,5 @@ Do **not** recut an existing tag. Do **not** treat SmartScreen as a product bug.
 
 A Windows 11 KVM guest on this host can open the same preview from Edge at
 `http://192.168.122.1:8124/?preview=diff` while the host server binds `0.0.0.0`.
-That checks wrap / hide folders / the splitter only. Real File versions still
+That checks wrap / hide folders / both splitters only. Real File versions still
 needs the installer from GitHub Actions.

@@ -8,6 +8,8 @@ All notable changes to StepWind are documented here.
 - **File versions: the version list and the diff each have their own width.** They sit side
   by side with a drag splitter between them (the folder list still has its own splitter, or
   **Hide folders**). Wrap stays on the diff pane. All three widths and wrap/hide are remembered.
+  Showing the folder list again after widening the version column keeps the layout inside the
+  window; the wide version column comes back when folders are hidden.
 
 ## 1.0.3 — 2026-09-04
 
