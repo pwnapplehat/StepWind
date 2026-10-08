@@ -32,6 +32,7 @@ public sealed class WatchEngine : IDisposable
     private readonly PathExclusions _exclusions;
     private readonly ChangeDebouncer _debouncer;
     private readonly List<FileSystemWatcher> _watchers = [];
+    private readonly object _watcherLock = new();
     private readonly List<string> _roots;
     private readonly System.Threading.Timer _drainTimer;
     private readonly System.Threading.Timer _createTimer;
@@ -136,6 +137,14 @@ public sealed class WatchEngine : IDisposable
 
     private void StartWatching(string root)
     {
+        lock (_watcherLock)
+        {
+            StartWatchingUnlocked(root);
+        }
+    }
+
+    private void StartWatchingUnlocked(string root)
+    {
         var w = new FileSystemWatcher(root)
         {
             IncludeSubdirectories = true,
@@ -154,6 +163,66 @@ public sealed class WatchEngine : IDisposable
     }
 
     /// <summary>
+    /// A watcher can stop raising events without a clean Error (the root was briefly offline,
+    /// or a rebuild failed). Each drain checks that every live root still has a watcher, and
+    /// starts one again if it doesn't — otherwise protection stays dead until a service restart.
+    /// </summary>
+    private void EnsureWatchers()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        lock (_watcherLock)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            foreach (string root in _roots)
+            {
+                if (HasLiveWatcher(root) || !Directory.Exists(root))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    StartWatchingUnlocked(root);
+                    _log?.Invoke($"watcher restarted for {root}");
+                }
+                catch (Exception ex)
+                {
+                    _log?.Invoke($"watcher restart failed for {root}: {ex.Message}");
+                }
+            }
+        }
+    }
+
+    private bool HasLiveWatcher(string root)
+    {
+        foreach (FileSystemWatcher w in _watchers)
+        {
+            try
+            {
+                if (w.EnableRaisingEvents
+                    && string.Equals(w.Path.TrimEnd('\\', '/'), root.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // disposed between the error handler and this check
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// A watcher can die (buffer overflow under a burst, the root going briefly offline). We
     /// dispose it, rebuild it, and run a reconcile pass so anything missed during the gap is
     /// still captured — a dropped OS event must never mean a silently lost version.
@@ -161,32 +230,35 @@ public sealed class WatchEngine : IDisposable
     private void OnWatcherError(string root, FileSystemWatcher dead, Exception ex)
     {
         _log?.Invoke($"watcher on {root} errored ({ex.Message}); rebuilding + reconciling");
-        try
+        lock (_watcherLock)
         {
-            dead.EnableRaisingEvents = false;
-            _watchers.Remove(dead);
-            dead.Dispose();
-        }
-        catch
-        {
-            // already gone
-        }
-
-        if (_disposed)
-        {
-            return;
-        }
-
-        try
-        {
-            if (Directory.Exists(root))
+            try
             {
-                StartWatching(root);
+                dead.EnableRaisingEvents = false;
+                _watchers.Remove(dead);
+                dead.Dispose();
             }
-        }
-        catch (Exception rebuildEx)
-        {
-            _log?.Invoke($"watcher rebuild failed for {root}: {rebuildEx.Message}");
+            catch
+            {
+                // already gone
+            }
+
+            if (_disposed)
+            {
+                return;
+            }
+
+            try
+            {
+                if (Directory.Exists(root))
+                {
+                    StartWatchingUnlocked(root);
+                }
+            }
+            catch (Exception rebuildEx)
+            {
+                _log?.Invoke($"watcher rebuild failed for {root}: {rebuildEx.Message}");
+            }
         }
 
         _ = Task.Run(() =>
@@ -247,6 +319,8 @@ public sealed class WatchEngine : IDisposable
         {
             return; // a timer tick already in flight when Dispose ran must not capture
         }
+
+        EnsureWatchers();
 
         foreach (string path in _debouncer.TakeReady(DateTime.UtcNow))
         {
@@ -515,17 +589,22 @@ public sealed class WatchEngine : IDisposable
         _disposed = true;
         _drainTimer.Dispose();
         _createTimer.Dispose();
-        foreach (FileSystemWatcher w in _watchers.ToArray())
+        lock (_watcherLock)
         {
-            try
+            foreach (FileSystemWatcher w in _watchers.ToArray())
             {
-                w.EnableRaisingEvents = false;
-                w.Dispose();
+                try
+                {
+                    w.EnableRaisingEvents = false;
+                    w.Dispose();
+                }
+                catch
+                {
+                    // already disposed by error recovery
+                }
             }
-            catch
-            {
-                // already disposed by error recovery
-            }
+
+            _watchers.Clear();
         }
     }
 }

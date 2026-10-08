@@ -15,7 +15,10 @@ namespace StepWind.Core.Journal;
 ///     measured on 26200). The user saw the file vanish at the rename-to-marker instant, so
 ///     we emit the Delete right there, attributed to the FRN's last *real* name and original
 ///     parent, and suppress the eventual FileDelete record as a duplicate. Classic deletes
-///     (no marker, e.g. directories) still come from FileDelete directly.
+///     (no marker, e.g. directories, and Shift+Delete) still come from FileDelete directly.
+///   • Explorer's Delete key does not delete. It renames the file or folder into
+///     \$Recycle.Bin. That pair is the moment the user saw it vanish, so it is a Delete of
+///     the original path — not a move into a noise directory the timeline would drop.
 /// </summary>
 public sealed class OperationReconstructor
 {
@@ -89,19 +92,41 @@ public sealed class OperationReconstructor
             else if (r.Has(UsnReason.RenameNewName) && !marker
                 && pendingOldName.TryGetValue(r.FileReferenceNumber, out (string Name, ulong Parent) old))
             {
-                bool crossDir = old.Parent != r.ParentFileReferenceNumber;
                 string? oldDir = _resolveDirectory(old.Parent);
                 string? newDir = _resolveDirectory(r.ParentFileReferenceNumber);
-                ops.Add(new FileOperation
+                // Explorer Delete (not Shift+Delete) renames into \$Recycle.Bin under a $R name.
+                // The user deleted the original file; recording a move to $Rxxxx would then be
+                // dropped as recycle-bin noise, which is why only permanent deletes showed up.
+                if (IsRecycleBinDirectory(newDir) && !IsRecycleBinDirectory(oldDir))
                 {
-                    Kind = crossDir ? OperationKind.Move : OperationKind.Rename,
-                    FileReferenceNumber = r.FileReferenceNumber,
-                    TimestampUtc = r.TimestampUtc,
-                    Name = r.FileName,
-                    OldPath = Combine(oldDir, old.Name),
-                    NewPath = Combine(newDir, r.FileName),
-                    IsDirectory = isDir.GetValueOrDefault(r.FileReferenceNumber),
-                });
+                    if (deleteEmitted.Add(r.FileReferenceNumber))
+                    {
+                        ops.Add(new FileOperation
+                        {
+                            Kind = OperationKind.Delete,
+                            FileReferenceNumber = r.FileReferenceNumber,
+                            TimestampUtc = r.TimestampUtc,
+                            Name = old.Name,
+                            OldPath = Combine(oldDir, old.Name),
+                            IsDirectory = isDir.GetValueOrDefault(r.FileReferenceNumber) || r.IsDirectory,
+                        });
+                    }
+                }
+                else
+                {
+                    bool crossDir = old.Parent != r.ParentFileReferenceNumber;
+                    ops.Add(new FileOperation
+                    {
+                        Kind = crossDir ? OperationKind.Move : OperationKind.Rename,
+                        FileReferenceNumber = r.FileReferenceNumber,
+                        TimestampUtc = r.TimestampUtc,
+                        Name = r.FileName,
+                        OldPath = Combine(oldDir, old.Name),
+                        NewPath = Combine(newDir, r.FileName),
+                        IsDirectory = isDir.GetValueOrDefault(r.FileReferenceNumber),
+                    });
+                }
+
                 pendingOldName.Remove(r.FileReferenceNumber);
             }
 
@@ -163,6 +188,21 @@ public sealed class OperationReconstructor
 
     private static string? Combine(string? dir, string name)
         => string.IsNullOrEmpty(dir) ? null : System.IO.Path.Combine(dir, name);
+
+    /// <summary>
+    /// True when <paramref name="directoryPath"/> is the Recycle Bin or a folder inside it.
+    /// Explorer's ordinary Delete lands here; Shift+Delete does not.
+    /// </summary>
+    public static bool IsRecycleBinDirectory(string? directoryPath)
+    {
+        if (string.IsNullOrEmpty(directoryPath))
+        {
+            return false;
+        }
+
+        return directoryPath.Contains(@"\$Recycle.Bin\", StringComparison.OrdinalIgnoreCase)
+            || directoryPath.EndsWith(@"\$Recycle.Bin", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// Transient POSIX-unlink name inside \$Extend\$Deleted. Two shapes observed on real

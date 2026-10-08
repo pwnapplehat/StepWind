@@ -282,6 +282,24 @@ public class FolderRemovalTests : IDisposable
     }
 
     [Fact]
+    public void Browse_lists_a_protected_folder_before_any_file_is_saved()
+    {
+        string empty = Path.Combine(_root, "Empty");
+        Directory.CreateDirectory(empty);
+        IpcResponse added = _host.Handle(new IpcRequest
+        {
+            Command = IpcCommand.SetSettings,
+            Arg1 = JsonSerializer.Serialize(new { WatchedFolders = new[] { _folderA, _folderB, empty } }),
+        });
+        Assert.True(added.Ok, added.Error);
+
+        BrowseEntry[] root = Browse("", null);
+        BrowseEntry folder = Assert.Single(root, e => e.IsFolder && e.Name == "Empty");
+        Assert.Equal(0, folder.FileCount);
+        Assert.Equal(0, folder.VersionCount);
+    }
+
+    [Fact]
     public async Task Browse_search_finds_files_recursively_under_the_current_folder()
     {
         Directory.CreateDirectory(Path.Combine(_folderA, "Work"));

@@ -1328,6 +1328,37 @@ public sealed class StepWindHost : IDisposable
                 FileCount = kv.Value.Files,
                 LastCapturedUtc = kv.Value.Last,
             }));
+        if (depth == 0)
+        {
+            // Every protected folder is a root here, including ones that have no saved file yet.
+            // Waiting for the first capture hid folders the user had just added.
+            var present = new HashSet<string>(
+                result.Select(e => e.RelativePath), StringComparer.OrdinalIgnoreCase);
+            foreach (string root in AccessibleFolders(caller))
+            {
+                if (!System.IO.Directory.Exists(root))
+                {
+                    continue;
+                }
+
+                string ns = NamespaceOf(root);
+                if (!present.Add(ns))
+                {
+                    continue;
+                }
+
+                result.Add(new BrowseEntry
+                {
+                    Name = DisplayNameForSegment(ns),
+                    RelativePath = ns,
+                    IsFolder = true,
+                    VersionCount = 0,
+                    FileCount = 0,
+                    LastCapturedUtc = DateTime.MinValue,
+                });
+            }
+        }
+
         result.AddRange(directFiles.OrderByDescending(f => f.LastCapturedUtc));
         return [.. result.Take(cap)];
     }

@@ -4,6 +4,16 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+### Fixed
+- **Timeline: Explorer Delete is recorded.** Sending a file or folder to the Recycle Bin
+  is a rename into `\$Recycle.Bin`, so it never showed up. Shift+Delete already did.
+  Recycle-bin deletes now appear as Delete, under the original name. Restoring from the
+  Recycle Bin is still a move.
+- **File versions lists every protected folder**, including one that has no saved file yet.
+  A folder's count is saved files, not every file on disk.
+- **A protected folder keeps being watched** if its watcher stops. StepWind starts it
+  again instead of waiting for a service restart.
+
 ## 1.0.4 — 2026-09-05
 
 **Version history and the diff each have their own width.** They sit side by side with a

@@ -438,7 +438,7 @@ function renderCoverageRow() {
     <div class="set-row">
       <div style="min-width:0">
         <div class="set-title">Timeline coverage</div>
-        <div class="set-sub">The whole-machine timeline records drives with a change journal (NTFS, and ReFS/Dev Drive where Windows provides one). Removable, network, and exFAT drives aren't on the timeline — but you can still protect any folder on them for full version history.</div>
+        <div class="set-sub">These chips are the timeline only — StepWind does not protect or scan a whole drive. A green drive means moves, renames, and deletes on that drive can show up here. Version history is only for the folders you add under Protected folders. Removable, network, and exFAT drives stay off the timeline; you can still protect a folder on them.</div>
         <div class="cov-list">${chips}</div>
       </div>
     </div>`;
@@ -904,7 +904,9 @@ function renderBrowseList(animate = false) {
       <div style="min-width:0">
         <div class="f-name">${esc(e0.Name)}</div>
         <div class="f-sub">${e0.IsFolder
-          ? `${e0.FileCount} file${e0.FileCount === 1 ? "" : "s"} · ${e0.VersionCount} version${e0.VersionCount === 1 ? "" : "s"}`
+          ? (e0.VersionCount
+            ? `${e0.FileCount} saved file${e0.FileCount === 1 ? "" : "s"} · ${e0.VersionCount} version${e0.VersionCount === 1 ? "" : "s"}`
+            : "Protected — versions appear as files change")
           : `${e0.VersionCount} version${e0.VersionCount === 1 ? "" : "s"} · ${fmtWhen(e0.LastCapturedUtc)}`}</div>
       </div>
       ${e0.IsFolder ? '<div class="f-chev"><svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></div>' : ""}

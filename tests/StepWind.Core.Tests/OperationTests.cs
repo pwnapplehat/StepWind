@@ -69,6 +69,79 @@ public class OperationReconstructorTests
     }
 
     [Fact]
+    public void Explorer_recycle_bin_delete_is_recorded_as_a_delete_of_the_original_file()
+    {
+        // Ordinary Delete is not FILE_DELETE. Explorer renames the file into $Recycle.Bin
+        // under a $R name. Shift+Delete is the path that already arrived as FileDelete.
+        const ulong recycle = 300;
+        string? ResolveRecycle(ulong frn) => frn switch
+        {
+            DirA => @"C:\Users\Sam\Documents",
+            300 => @"C:\$Recycle.Bin\S-1-5-21-1",
+            _ => null,
+        };
+        var records = new[]
+        {
+            Rec(FileFrn, DirA, UsnReason.RenameOldName, "chapter.docx", usn: 1),
+            Rec(FileFrn, recycle, UsnReason.RenameNewName | UsnReason.Close, "$R1A2B3C.docx", usn: 2),
+        };
+
+        FileOperation op = Assert.Single(new OperationReconstructor(ResolveRecycle).Reconstruct(records));
+        Assert.Equal(OperationKind.Delete, op.Kind);
+        Assert.Equal("chapter.docx", op.Name);
+        Assert.EndsWith(@"Documents\chapter.docx", op.OldPath);
+        Assert.Null(op.NewPath);
+        Assert.False(op.IsDirectory);
+        Assert.False(op.IsReversible);
+    }
+
+    [Fact]
+    public void Explorer_recycle_of_a_folder_is_a_directory_delete()
+    {
+        const ulong recycle = 300;
+        string? ResolveRecycle(ulong frn) => frn switch
+        {
+            DirA => @"C:\Users\Sam\Documents",
+            300 => @"C:\$Recycle.Bin\S-1-5-21-1",
+            _ => null,
+        };
+        var records = new[]
+        {
+            Rec(FolderFrn, DirA, UsnReason.RenameOldName, "Drafts", dir: true, usn: 1),
+            Rec(FolderFrn, recycle, UsnReason.RenameNewName | UsnReason.Close, "$RFOLDER", dir: true, usn: 2),
+        };
+
+        FileOperation op = Assert.Single(new OperationReconstructor(ResolveRecycle).Reconstruct(records));
+        Assert.Equal(OperationKind.Delete, op.Kind);
+        Assert.True(op.IsDirectory);
+        Assert.Equal("Drafts", op.Name);
+        Assert.EndsWith(@"Documents\Drafts", op.OldPath);
+    }
+
+    [Fact]
+    public void Restore_out_of_the_recycle_bin_stays_a_move()
+    {
+        const ulong recycle = 300;
+        string? ResolveRecycle(ulong frn) => frn switch
+        {
+            DirA => @"C:\Users\Sam\Documents",
+            300 => @"C:\$Recycle.Bin\S-1-5-21-1",
+            _ => null,
+        };
+        var records = new[]
+        {
+            Rec(FileFrn, recycle, UsnReason.RenameOldName, "$R1A2B3C.docx", usn: 1),
+            Rec(FileFrn, DirA, UsnReason.RenameNewName | UsnReason.Close, "chapter.docx", usn: 2),
+        };
+
+        FileOperation op = Assert.Single(new OperationReconstructor(ResolveRecycle).Reconstruct(records));
+        Assert.Equal(OperationKind.Move, op.Kind);
+        Assert.Equal("chapter.docx", op.Name);
+        Assert.Contains("$Recycle.Bin", op.OldPath, StringComparison.OrdinalIgnoreCase);
+        Assert.EndsWith(@"Documents\chapter.docx", op.NewPath);
+    }
+
+    [Fact]
     public void Posix_delete_is_emitted_at_marker_rename_even_if_filedelete_never_arrives()
     {
         // Windows 26200 reality (measured with a held shared-delete handle): the marker is
