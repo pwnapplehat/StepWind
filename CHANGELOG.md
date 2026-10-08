@@ -4,6 +4,14 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+## 1.0.5 — 2026-10-08
+
+**Explorer Delete shows up on the timeline.** Sending a file or folder to the Recycle Bin
+is recorded as a Delete under its real name. Shift+Delete already was. File versions
+lists every protected folder, including one with nothing saved yet, and a folder's count
+is saved files rather than every file on disk. If a folder's watcher stops, StepWind
+starts it again.
+
 ### Fixed
 - **Timeline: Explorer Delete is recorded.** Sending a file or folder to the Recycle Bin
   is a rename into `\$Recycle.Bin`, so it never showed up. Shift+Delete already did.
