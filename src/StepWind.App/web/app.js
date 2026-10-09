@@ -340,6 +340,16 @@ $$(".nav-item").forEach((b) => (b.onclick = () => navigate(b.dataset.view)));
 let lastStatus = null;
 let watchedFolders = [];
 
+function protectionLine(s) {
+  if ((s.WatchedRoots ?? 0) === 0) return t("status.noFolders");
+  const line = `${s.WatchedRoots} folder${s.WatchedRoots === 1 ? "" : "s"} · ` +
+    `${(s.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(s.StoreBytes)}`;
+  if (s.ScanRunning) return line + " · saving existing files…";
+  if ((s.UnreachableFolders || []).length) return line + " · a protected folder is not visible to the service";
+  if ((s.TotalVersions ?? 0) === 0 && s.ScanNote) return line + " · " + s.ScanNote;
+  return line;
+}
+
 async function pollStatus() {
   try {
     const s = await call("status");
@@ -353,10 +363,7 @@ async function pollStatus() {
     } else {
       $("#status-dot").className = "dot ok";
       $("#status-title").textContent = t("status.active");
-      $("#status-sub").textContent = s.WatchedRoots === 0
-        ? t("status.noFolders")
-        : `${s.WatchedRoots} folder${s.WatchedRoots === 1 ? "" : "s"} · ` +
-          `${(s.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(s.StoreBytes)}`;
+      $("#status-sub").textContent = protectionLine(s);
     }
   } catch {
     lastStatus = null;
@@ -432,13 +439,13 @@ function renderCoverageRow() {
   const vols = (lastStatus && lastStatus.Volumes) || [];
   if (!vols.length) return "";
   const chips = vols.map((v) =>
-    `<span class="cov ${v.Monitored ? "on" : "off"}" title="${esc(v.Note || "")}">` +
-    `<span class="cov-dot"></span>${esc(v.Name)} <span class="cov-fs">${esc(v.FileSystem || "")}</span></span>`).join("");
+    `<button type="button" class="cov ${v.Monitored ? "on" : "off"}" data-vol="${esc(v.Name)}" title="${esc(v.Note || "")}" aria-pressed="${v.Ignored ? "true" : "false"}">` +
+    `<span class="cov-dot"></span>${esc(v.Name)} <span class="cov-fs">${esc(v.FileSystem || "")}</span></button>`).join("");
   return `
     <div class="set-row">
       <div style="min-width:0">
         <div class="set-title">Timeline coverage</div>
-        <div class="set-sub">These chips are the timeline only — StepWind does not protect or scan a whole drive. A green drive means moves, renames, and deletes on that drive can show up here. Version history is only for the folders you add under Protected folders. Removable, network, and exFAT drives stay off the timeline; you can still protect a folder on them.</div>
+        <div class="set-sub">The timeline records fixed NTFS drives, including external disks Windows treats as fixed. Click a drive to turn recording off or on. These chips are not protected folders — version history is only for folders you add. Removable, network, and exFAT drives stay off the timeline.</div>
         <div class="cov-list">${chips}</div>
       </div>
     </div>`;
@@ -1178,7 +1185,7 @@ async function loadFolders() {
     <div class="set-label" style="margin-top:20px">Excluded from protection</div>
     <div class="card set-card" style="max-width:820px">
       <div style="display:flex;align-items:flex-start;gap:16px">
-        <div class="set-sub" style="margin:0;max-width:none">Subfolders or paths inside a protected folder that StepWind should skip — heavy build outputs, datasets, or caches you don't want versioned. (<span class="mono" style="font-size:11px">node_modules</span>, <span class="mono" style="font-size:11px">.git</span>, temp files and cloud online-only files are already skipped automatically.)</div>
+        <div class="set-sub" style="margin:0;max-width:none">Subfolders or paths inside a protected folder that StepWind should skip — heavy build outputs, datasets, or caches you don't want versioned. Deletes and other timeline events under an exclusion are hidden too. (<span class="mono" style="font-size:11px">node_modules</span>, <span class="mono" style="font-size:11px">.git</span>, temp files and cloud online-only files are already skipped automatically.)</div>
         <button class="btn" id="excl-add" style="flex-shrink:0">
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> Add exclusion
         </button>
@@ -1505,7 +1512,7 @@ async function loadSettings() {
           </div>` : ""}
           <div class="set-row">
             <div><div class="set-title">History storage</div>
-            <div class="set-sub">Deduplicated and compressed — old versions are garbage-collected automatically per the retention rules below.</div></div>
+            <div class="set-sub">Deduplicated and compressed — old versions are garbage-collected automatically per the retention rules below.${lastStatus && (lastStatus.TotalVersions ?? 0) === 0 && lastStatus.ScanNote ? " " + esc(lastStatus.ScanNote) : ""}</div></div>
             <div class="set-value">${lastStatus ? `${(lastStatus.TotalVersions ?? 0).toLocaleString()} versions · ${fmtSize(lastStatus.StoreBytes)}` : "—"}</div>
           </div>
           <div class="set-row">
@@ -1611,6 +1618,16 @@ async function loadSettings() {
     }
   };
   wireSwitch("sw-fr", (on) => patchAndReload({ FlightRecorderEnabled: on }, true));
+  $$(".cov", host).forEach((chip) => {
+    chip.onclick = () => {
+      const name = chip.dataset.vol;
+      const ignored = new Set((s?.IgnoredVolumes || []).map((v) => String(v).replace(/[\\/]+$/, "").toUpperCase()));
+      const id = String(name || "").replace(/[\\/]+$/, "").toUpperCase();
+      if (ignored.has(id)) ignored.delete(id);
+      else ignored.add(id);
+      patchAndReload({ IgnoredVolumes: [...ignored] }, true);
+    };
+  });
   wireSwitch("sw-gitignore", (on) => patchAndReload({ RespectGitIgnore: on }, false));
   wireSwitch("sw-enc", (on) => patchAndReload({ EncryptionEnabled: on }, true));
   wireSwitch("sw-encidx", (on) => patchAndReload({ EncryptIndex: on }, false));

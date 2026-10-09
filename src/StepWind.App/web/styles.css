@@ -455,6 +455,8 @@ body.no-anim .enter > * { opacity: 1 !important; transform: none !important; }
 .cov-dot { width: 7px; height: 7px; border-radius: 99px; background: var(--text-3); }
 .cov.on .cov-dot { background: var(--ok); }
 .cov.off { color: var(--text-3); }
+button.cov { cursor: pointer; font: inherit; }
+button.cov:hover { border-color: var(--accent); }
 .cov-fs { color: var(--text-3); font-size: 10.5px; }
 /* first-run onboarding folder picker */
 .ob-folders { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }

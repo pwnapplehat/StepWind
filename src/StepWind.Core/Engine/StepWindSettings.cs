@@ -14,8 +14,14 @@ public sealed class StepWindSettings
     /// <summary>Folders whose file contents get full version history (the time-machine layer).</summary>
     public List<string> WatchedFolders { get; set; } = [];
 
-    /// <summary>Absolute path prefixes to never version (games, huge data dirs…).</summary>
+    /// <summary>Absolute path prefixes to never version, and to hide from the timeline.</summary>
     public List<string> ExcludedPrefixes { get; set; } = [];
+
+    /// <summary>
+    /// Drive ids ("E:") the whole-machine timeline must not read. Fixed external disks show up
+    /// as ordinary NTFS volumes; this is how a person turns one of them off.
+    /// </summary>
+    public List<string> IgnoredVolumes { get; set; } = [];
 
     /// <summary>
     /// Who owns each protected root, keyed by its store namespace segment (the folder leaf, e.g.
@@ -94,6 +100,35 @@ public sealed class StepWindSettings
     /// history.
     /// </summary>
     public Dictionary<string, string> RootIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Drive id in "E:" form, or empty when <paramref name="volume"/> is blank.</summary>
+    public static string NormalizeVolumeId(string? volume)
+    {
+        if (string.IsNullOrWhiteSpace(volume))
+        {
+            return "";
+        }
+
+        string v = volume.Trim().TrimEnd('\\', '/');
+        if (v.Length == 1 && char.IsLetter(v[0]))
+        {
+            return char.ToUpperInvariant(v[0]) + ":";
+        }
+
+        if (v.Length >= 2 && v[1] == ':')
+        {
+            return char.ToUpperInvariant(v[0]) + ":";
+        }
+
+        return v;
+    }
+
+    /// <summary>True when the timeline must not read this drive.</summary>
+    public bool IsVolumeIgnored(string volume)
+    {
+        string id = NormalizeVolumeId(volume);
+        return id.Length > 0 && (IgnoredVolumes ?? []).Any(v => NormalizeVolumeId(v).Equals(id, StringComparison.OrdinalIgnoreCase));
+    }
 
     public static string DefaultRoot =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StepWind");

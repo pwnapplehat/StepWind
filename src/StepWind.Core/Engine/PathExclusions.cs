@@ -55,6 +55,38 @@ public sealed class PathExclusions
     public bool IsExcludedByExtension(string fullPath)
         => ExcludedExtensions.Contains(Path.GetExtension(fullPath));
 
+    /// <summary>True when <paramref name="fullPath"/> is the prefix or a file inside it.</summary>
+    public static bool IsUnderAnyPrefix(string? fullPath, IEnumerable<string> prefixes)
+    {
+        if (string.IsNullOrEmpty(fullPath))
+        {
+            return false;
+        }
+
+        foreach (string raw in prefixes)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            string prefix = raw.TrimEnd('\\', '/');
+            if (prefix.Length == 0)
+            {
+                continue;
+            }
+
+            if (fullPath.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+                || fullPath.StartsWith(prefix + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || fullPath.StartsWith(prefix + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public bool IsUnderExcludedPrefix(string fullPath)
     {
         foreach (string prefix in _extraPrefixes)

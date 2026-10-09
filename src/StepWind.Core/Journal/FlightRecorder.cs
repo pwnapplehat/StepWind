@@ -36,13 +36,16 @@ public sealed class FlightRecorder : IDisposable
 
     private readonly string[] _ignorePrefixes;
 
+    private readonly Func<string, bool>? _skipVolume;
+
     public FlightRecorder(string stateDir, IEnumerable<string> volumes, int capacity = 5000,
-        Action<string>? log = null, IEnumerable<string>? ignorePrefixes = null)
+        Action<string>? log = null, IEnumerable<string>? ignorePrefixes = null, Func<string, bool>? skipVolume = null)
     {
         _cursorPath = System.IO.Path.Combine(stateDir, "usn-cursors.json");
         _capacity = capacity;
         _log = log;
         _volumes = [.. volumes];
+        _skipVolume = skipVolume;
         // Never show StepWind's own bookkeeping (store + state dir) on the timeline, plus any
         // caller-supplied noise prefixes. Keeps "what just happened" about the USER's actions.
         _ignorePrefixes = [.. (ignorePrefixes ?? []).Append(stateDir)
@@ -55,10 +58,12 @@ public sealed class FlightRecorder : IDisposable
         // replay the entire existing journal as if it all just happened.
         foreach (string vol in _volumes)
         {
-            if (!_cursors.ContainsKey(vol))
+            if (_skipVolume?.Invoke(vol) == true || _cursors.ContainsKey(vol))
             {
-                TryPrime(vol);
+                continue;
             }
+
+            TryPrime(vol);
         }
 
         _timer = new System.Threading.Timer(_ => Poll(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
@@ -127,6 +132,12 @@ public sealed class FlightRecorder : IDisposable
     {
         foreach (string volume in _volumes)
         {
+            if (_skipVolume?.Invoke(volume) == true)
+            {
+                _active[volume] = false;
+                continue;
+            }
+
             try
             {
                 PollVolume(volume);

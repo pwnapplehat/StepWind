@@ -35,6 +35,26 @@ public class ExclusionTests
     }
 
     [Fact]
+    public void An_excluded_prefix_covers_files_inside_it_and_not_a_sibling()
+    {
+        string[] prefixes = [@"D:\Archive\Old"];
+        Assert.True(PathExclusions.IsUnderAnyPrefix(@"D:\Archive\Old\note.txt", prefixes));
+        Assert.True(PathExclusions.IsUnderAnyPrefix(@"D:\Archive\Old", prefixes));
+        Assert.False(PathExclusions.IsUnderAnyPrefix(@"D:\Archive\Older\note.txt", prefixes));
+        Assert.False(PathExclusions.IsUnderAnyPrefix(@"C:\Users\me\note.txt", prefixes));
+    }
+
+    [Fact]
+    public void Volume_ignore_matches_drive_ids()
+    {
+        var settings = new StepWindSettings { IgnoredVolumes = ["e:\\"] };
+        Assert.True(settings.IsVolumeIgnored("E:"));
+        Assert.True(settings.IsVolumeIgnored(@"e:\"));
+        Assert.False(settings.IsVolumeIgnored("C:"));
+        Assert.Equal("E:", StepWindSettings.NormalizeVolumeId("e"));
+    }
+
+    [Fact]
     public void Skips_reparse_points()
         => Assert.False(_ex.ShouldVersion(@"C:\link\target.txt", FileAttributes.Normal | FileAttributes.ReparsePoint, 100));
 

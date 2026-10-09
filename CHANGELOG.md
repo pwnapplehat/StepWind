@@ -4,6 +4,23 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+## 1.0.6 — 2026-10-09
+
+**Exclusions apply to the timeline, a drive can be turned off, and an empty store says why.**
+Verified on a real Windows folder: a normal file was saved, a file inside an exclusion was not,
+an online-only file was counted instead of saved, a later edit was saved, and a real fixed
+drive switched off the timeline.
+
+### Fixed
+- **An exclusion hides that folder on the timeline too.** Deletes (and other events) under an
+  excluded path were still listed. Version history already skipped them.
+- **A drive can be left off the timeline.** Timeline coverage chips are switches. Turning a
+  drive off stops the flight recorder from reading it, including an external disk Windows
+  reports as a fixed NTFS volume. Version history is unchanged: only folders you protect.
+- **An empty history store says why.** The status line reports a scan still running, files
+  that are online-only cloud copies, a protected folder the service cannot see, or a finished
+  scan that saved nothing — instead of a bare "0 versions".
+
 ## 1.0.5 — 2026-10-08
 
 **Explorer Delete shows up on the timeline.** Sending a file or folder to the Recycle Bin

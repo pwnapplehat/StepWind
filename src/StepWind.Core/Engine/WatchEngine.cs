@@ -7,6 +7,9 @@ namespace StepWind.Core.Engine;
 /// <summary>Snapshot of engine activity for the UI/logs.</summary>
 public sealed record EngineStatus(int WatchedRoots, int PendingChanges, long VersionsCaptured, DateTime? LastCaptureUtc, int LockedFiles);
 
+/// <summary>What the latest baseline scan of protected folders actually did. Shown when the store is still empty.</summary>
+public sealed record CatchUpReport(bool Running, int Captured, int SkippedCloud, int SkippedExcluded, int SkippedOther, string Note);
+
 /// <summary>
 /// The folder time-machine orchestrator: watches configured roots with FileSystemWatcher,
 /// debounces bursts, applies <see cref="PathExclusions"/>, and captures a new version through
@@ -47,6 +50,13 @@ public sealed class WatchEngine : IDisposable
 
     private long _versionsCaptured; // Interlocked — touched by the drain timer, reconcile, and error-recovery threads
     private DateTime? _lastCaptureUtc;
+    private readonly object _catchUpLock = new();
+    private bool _catchUpRunning;
+    private int _catchUpCaptured;
+    private int _catchUpCloud;
+    private int _catchUpExcluded;
+    private int _catchUpOther;
+    private string _catchUpNote = "Existing files have not been scanned yet.";
     private volatile bool _disposed;
 
     /// <summary>How often the create fast-path checks whether a new file has settled.</summary>
@@ -110,6 +120,31 @@ public sealed class WatchEngine : IDisposable
     }
 
     public EngineStatus Status => new(_roots.Count, _debouncer.PendingCount, _versionsCaptured, _lastCaptureUtc, LockedFileCount());
+
+    /// <summary>Latest baseline scan, for the status line when history is still empty.</summary>
+    public CatchUpReport CatchUp
+    {
+        get
+        {
+            lock (_catchUpLock)
+            {
+                return new CatchUpReport(_catchUpRunning, _catchUpCaptured, _catchUpCloud, _catchUpExcluded, _catchUpOther, _catchUpNote);
+            }
+        }
+    }
+
+    private void PublishCatchUp(bool running, int captured, int cloud, int excluded, int other, string note)
+    {
+        lock (_catchUpLock)
+        {
+            _catchUpRunning = running;
+            _catchUpCaptured = captured;
+            _catchUpCloud = cloud;
+            _catchUpExcluded = excluded;
+            _catchUpOther = other;
+            _catchUpNote = note;
+        }
+    }
 
     /// <summary>How many files are currently held open by another program (locked past the transient window).</summary>
     private int LockedFileCount()
@@ -448,10 +483,24 @@ public sealed class WatchEngine : IDisposable
     public int Reconcile(CancellationToken ct = default)
     {
         int captured = 0;
+        int cloud = 0;
+        int excluded = 0;
+        int other = 0;
+        string endNote = "Scan finished and nothing was saved.";
+        PublishCatchUp(true, 0, 0, 0, 0, "Saving files already in protected folders…");
+        try
+        {
+        if (_roots.Count == 0)
+        {
+            endNote = "No protected folder is visible to the service, so nothing can be saved.";
+            return 0;
+        }
+
         foreach (string root in _roots)
         {
             if (_disposed)
             {
+                endNote = "Stopped because the protected folders changed.";
                 return captured;
             }
 
@@ -465,47 +514,59 @@ public sealed class WatchEngine : IDisposable
                     AttributesToSkip = FileAttributes.System,
                 });
             }
-            catch
+            catch (Exception ex)
             {
+                other++;
+                endNote = "Could not read a protected folder: " + ex.Message;
                 continue;
             }
 
             foreach (string path in files)
             {
-                if (_disposed || ct.IsCancellationRequested)
-                {
-                    _log?.Invoke($"catch-up aborted (folders changed) after {captured} file(s)");
-                    return captured;
-                }
+                    if (_disposed || ct.IsCancellationRequested)
+                    {
+                        endNote = "Stopped because the protected folders changed.";
+                        return captured;
+                    }
 
-                if (_canCapture is not null && !_canCapture())
-                {
-                    _log?.Invoke($"catch-up paused (storage) after {captured} file(s)");
-                    return captured;
-                }
+                    if (_canCapture is not null && !_canCapture())
+                    {
+                        endNote = "Paused because the disk is low on space.";
+                        return captured;
+                    }
 
                 try
                 {
                     if (_exclusions.IsExcludedByDirectory(path) || _exclusions.IsExcludedByExtension(path)
                         || _exclusions.IsUnderExcludedPrefix(path))
                     {
+                        excluded++;
                         continue;
                     }
 
                     var info = new FileInfo(Storage.LongPath.Of(path));
+                    if (PathExclusions.IsCloudPlaceholder(info.Attributes))
+                    {
+                        cloud++;
+                        continue;
+                    }
+
                     if (!_exclusions.ShouldVersion(path, info.Attributes, info.Length))
                     {
+                        other++;
                         continue;
                     }
 
                     if (IsGitIgnored(path))
                     {
+                        other++;
                         continue;
                     }
 
                     string? rel = RelativeToRoot(path);
                     if (rel is null)
                     {
+                        other++;
                         continue;
                     }
 
@@ -519,22 +580,42 @@ public sealed class WatchEngine : IDisposable
 
                     _store.Capture(path, rel, latest is null ? "baseline" : "catch-up");
                     captured++;
+                    if (captured % 25 == 0)
+                    {
+                        PublishCatchUp(true, captured, cloud, excluded, other, $"Saving existing files… {captured} saved");
+                    }
                 }
                 catch
                 {
-                    // one unreadable file never stops the sweep
+                    other++;
                 }
             }
         }
 
-        if (captured > 0)
+        if (captured > 0 || cloud > 0 || excluded > 0 || endNote == "Scan finished and nothing was saved.")
         {
-            Interlocked.Add(ref _versionsCaptured, captured);
-            _lastCaptureUtc = DateTime.UtcNow;
-            _log?.Invoke($"catch-up: captured {captured} changed/new file(s) since last run");
+            endNote = captured > 0
+                ? $"Saved {captured} file(s)."
+                : cloud > 0
+                    ? $"{cloud} files are online-only cloud copies, so they were not saved."
+                    : excluded > 0
+                        ? "Every file scanned is excluded, so nothing was saved."
+                        : "Scan finished and nothing was saved.";
         }
 
         return captured;
+        }
+        finally
+        {
+            if (captured > 0)
+            {
+                Interlocked.Add(ref _versionsCaptured, captured);
+                _lastCaptureUtc = DateTime.UtcNow;
+            }
+
+            PublishCatchUp(false, captured, cloud, excluded, other, endNote);
+            _log?.Invoke("catch-up: " + endNote);
+        }
     }
 
     /// <summary>

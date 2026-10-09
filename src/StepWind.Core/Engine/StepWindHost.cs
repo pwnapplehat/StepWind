@@ -216,7 +216,8 @@ public sealed class StepWindHost : IDisposable
         try
         {
             _flightRecorder = new FlightRecorder(_settings.StoreRoot, FixedJournalCandidates(), log: _log,
-                ignorePrefixes: new[] { StepWindSettings.DefaultRoot, _settings.StoreRoot });
+                ignorePrefixes: new[] { StepWindSettings.DefaultRoot, _settings.StoreRoot },
+                skipVolume: volume => _settings.IsVolumeIgnored(volume));
             return null;
         }
         catch (Exception ex)
@@ -479,6 +480,7 @@ public sealed class StepWindHost : IDisposable
     {
         WatchEngine watch = _watch;
         EngineStatus s = watch.Status;
+        CatchUpReport catchUp = watch.CatchUp;
         List<string> folders = AccessibleFolders(caller);
         StorageState storage = _storageState;
         Updates.PendingUpdate? update = _pendingUpdate;
@@ -501,6 +503,10 @@ public sealed class StepWindHost : IDisposable
             UpdateReadyPath = update?.SetupPath,
             Volumes = BuildVolumeCoverage(),
             WatchedFolders = folders,
+            UnreachableFolders = folders.Where(f => !System.IO.Directory.Exists(f)).ToArray(),
+            ScanRunning = catchUp.Running,
+            ScanSkippedCloud = catchUp.SkippedCloud,
+            ScanNote = catchUp.Note,
         };
     }
 
@@ -524,10 +530,13 @@ public sealed class StepWindHost : IDisposable
                 }
 
                 string name = d.Name.TrimEnd('\\');
-                bool monitored = active.Contains(name); // the honest truth: is the journal actually being read
+                bool ignored = _settings.IsVolumeIgnored(name);
+                bool monitored = !ignored && active.Contains(name); // the honest truth: is the journal actually being read
                 bool couldJournal = d.DriveType == DriveType.Fixed && d.DriveFormat is "NTFS" or "ReFS";
-                string note = monitored
-                    ? "Covered by the timeline"
+                string note = ignored
+                    ? "Timeline is off for this drive. Click to record it again."
+                    : monitored
+                    ? "Covered by the timeline. Click to stop recording this drive."
                     : couldJournal
                         ? (recorder is null ? "Flight recorder is off" : "No change journal on this drive — protect a folder here for version history")
                         : $"{d.DriveType} {d.DriveFormat}: not on the timeline — protect a folder here for version history";
@@ -537,6 +546,7 @@ public sealed class StepWindHost : IDisposable
                     FileSystem = d.DriveFormat,
                     Type = d.DriveType.ToString(),
                     Monitored = monitored,
+                    Ignored = ignored,
                     Note = note,
                 });
             }
@@ -586,6 +596,17 @@ public sealed class StepWindHost : IDisposable
             // no reverse in. It deliberately still shows the user their OWN moves anywhere on disk
             // (the whole point of the flight recorder), not just inside protected folders.
             if (!CallerCanSeeOperation(caller, op, watch, access))
+            {
+                continue;
+            }
+
+            if (PathExclusions.IsUnderAnyPrefix(op.OldPath, _settings.ExcludedPrefixes)
+                || PathExclusions.IsUnderAnyPrefix(op.NewPath, _settings.ExcludedPrefixes))
+            {
+                continue;
+            }
+
+            if (IsOnIgnoredVolume(op.OldPath) || IsOnIgnoredVolume(op.NewPath))
             {
                 continue;
             }
@@ -707,6 +728,16 @@ public sealed class StepWindHost : IDisposable
         catch { return null; }
     }
 
+    private bool IsOnIgnoredVolume(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || path.Length < 2 || path[1] != ':')
+        {
+            return false;
+        }
+
+        return _settings.IsVolumeIgnored(path);
+    }
+
     /// <summary>
     /// For a Delete whose file lived in a protected folder and has stored history, returns the
     /// VersionId of its latest saved version so the timeline can offer one-click delete-undo. A
@@ -754,6 +785,7 @@ public sealed class StepWindHost : IDisposable
     {
         WatchedFolders = AccessibleFolders(caller),
         _settings.ExcludedPrefixes,
+        _settings.IgnoredVolumes,
         _settings.FlightRecorderEnabled,
         _settings.AutoUpdateEnabled,
         _settings.EncryptionEnabled,
@@ -780,6 +812,7 @@ public sealed class StepWindHost : IDisposable
     {
         public List<string>? WatchedFolders { get; set; }
         public List<string>? ExcludedPrefixes { get; set; }
+        public List<string>? IgnoredVolumes { get; set; }
         public bool? AutoUpdateEnabled { get; set; }
         public bool? EncryptionEnabled { get; set; }
         public bool? EncryptIndex { get; set; }
@@ -872,6 +905,14 @@ public sealed class StepWindHost : IDisposable
         {
             _settings.ExcludedPrefixes = [.. patch.ExcludedPrefixes];
             foldersChanged = true;
+        }
+
+        if (patch.IgnoredVolumes is not null)
+        {
+            _settings.IgnoredVolumes = [.. patch.IgnoredVolumes
+                .Select(StepWindSettings.NormalizeVolumeId)
+                .Where(id => id.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)];
         }
 
         if (patch.AutoUpdateEnabled is bool au)
@@ -1007,6 +1048,7 @@ public sealed class StepWindHost : IDisposable
         var parts = new List<string>();
         if (p.WatchedFolders is not null) parts.Add($"WatchedFolders={p.WatchedFolders.Count}");
         if (p.ExcludedPrefixes is not null) parts.Add($"ExcludedPrefixes={p.ExcludedPrefixes.Count}");
+        if (p.IgnoredVolumes is not null) parts.Add($"IgnoredVolumes={p.IgnoredVolumes.Count}");
         if (p.EncryptionEnabled is bool e) parts.Add($"EncryptionEnabled={e}");
         if (p.EncryptIndex is bool ei) parts.Add($"EncryptIndex={ei}");
         if (p.AutoUpdateEnabled is bool au) parts.Add($"AutoUpdateEnabled={au}");
