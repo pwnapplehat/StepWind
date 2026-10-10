@@ -600,7 +600,7 @@ function renderTimeline(animate = false) {
 async function loadTimeline(silent, animate = false) {
   let json = "[]";
   try {
-    const data = (await call("timeline", { limit: 250 })) || [];
+    const data = (await call("timeline", { limit: 1000 })) || [];
     json = JSON.stringify(data);
     if (silent && json === tlFingerprint) return; // nothing changed — leave the DOM alone
     tlOps = data;

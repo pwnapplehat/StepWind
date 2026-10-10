@@ -4,6 +4,17 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+## 1.0.7 — 2026-10-10
+
+**Creates and deletes stay on the timeline.** They were only kept in memory, and only the
+newest slice was shown, so a burst of ordinary saves — or coming back to the window after
+the service had cycled — made them disappear. They are written to disk and are not pushed
+out by later modifies.
+
+### Fixed
+- **Timeline: creates and deletes are remembered.** A burst of file saves no longer crowds
+  them off the list, and they are still there after the service starts again.
+
 ## 1.0.6 — 2026-10-09
 
 **Exclusions apply to the timeline, a drive can be turned off, and an empty store says why.**

@@ -20,7 +20,7 @@
 #endif
 
 #define AppName "StepWind"
-#define AppVersion "1.0.6"
+#define AppVersion "1.0.7"
 #define AppPublisher "StepWind Contributors"
 #define AppURL "https://stepwind.app"
 #define RepoURL "https://github.com/pwnapplehat/StepWind"

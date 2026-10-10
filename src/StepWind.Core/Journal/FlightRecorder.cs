@@ -29,8 +29,7 @@ public sealed class FlightRecorder : IDisposable
     // candidate can fail — a ReFS/Dev-Drive volume may not expose a USN journal — and per-volume
     // errors are swallowed, so this is the honest source of truth for coverage reporting.
     private readonly ConcurrentDictionary<string, bool> _active = new(StringComparer.OrdinalIgnoreCase);
-    private readonly LinkedList<FileOperation> _recent = new();
-    private readonly object _recentLock = new();
+    private readonly TimelineLog _timeline;
     private readonly System.Threading.Timer _timer;
     private readonly string[] _volumes;
 
@@ -51,6 +50,7 @@ public sealed class FlightRecorder : IDisposable
         _ignorePrefixes = [.. (ignorePrefixes ?? []).Append(stateDir)
             .Select(p => p.TrimEnd('\\', '/')).Where(p => p.Length > 0)];
         System.IO.Directory.CreateDirectory(stateDir);
+        _timeline = new TimelineLog(System.IO.Path.Combine(stateDir, "timeline.jsonl"), _capacity);
         LoadCursors();
         _attribution.Start();
 
@@ -73,13 +73,7 @@ public sealed class FlightRecorder : IDisposable
     public IReadOnlyList<string> ActiveVolumes => [.. _active.Where(kv => kv.Value).Select(kv => kv.Key)];
 
     /// <summary>Most recent operations, newest first, up to <paramref name="limit"/>.</summary>
-    public IReadOnlyList<FileOperation> Recent(int limit)
-    {
-        lock (_recentLock)
-        {
-            return [.. _recent.Take(limit)];
-        }
-    }
+    public IReadOnlyList<FileOperation> Recent(int limit) => _timeline.Recent(limit);
 
     /// <summary>
     /// A stable, opaque handle for an operation in the ring. The GUI receives this on the
@@ -88,29 +82,14 @@ public sealed class FlightRecorder : IDisposable
     /// forge a "move THIS to THERE" request — the worst a bogus handle does is match nothing.
     /// Identity = file reference number + timestamp + kind (unique within the ring window).
     /// </summary>
-    public static string OpToken(FileOperation op)
-        => $"{op.FileReferenceNumber}:{op.TimestampUtc.Ticks}:{(int)op.Kind}";
+    public static string OpToken(FileOperation op) => TimelineLog.Token(op);
 
     /// <summary>
     /// Looks up the server-side operation for a handle from <see cref="OpToken"/>. Returns null
     /// if no matching operation is currently in the ring (unknown/forged/expired handle), so the
     /// caller rejects it rather than acting on attacker-chosen data.
     /// </summary>
-    public FileOperation? Find(string token)
-    {
-        lock (_recentLock)
-        {
-            foreach (FileOperation op in _recent)
-            {
-                if (OpToken(op) == token)
-                {
-                    return op;
-                }
-            }
-        }
-
-        return null;
-    }
+    public FileOperation? Find(string token) => _timeline.Find(token);
 
     private void TryPrime(string volume)
     {
@@ -195,6 +174,7 @@ public sealed class FlightRecorder : IDisposable
         _cursors[volume] = new Cursor(journalId, nextUsn);
         SaveCursors();
         ReattributeFresh();
+        _timeline.Flush();
     }
 
     /// <summary>
@@ -210,21 +190,7 @@ public sealed class FlightRecorder : IDisposable
     private void ReattributeFresh()
     {
         DateTime cutoff = DateTime.UtcNow - ReattributeWindow;
-        lock (_recentLock)
-        {
-            for (LinkedListNode<FileOperation>? node = _recent.First; node is not null; node = node.Next)
-            {
-                if (node.Value.TimestampUtc < cutoff)
-                {
-                    break; // newest-first: everything past here is too old to retry
-                }
-
-                if (node.Value.ByProcess is null && AttributeOp(node.Value) is { } who)
-                {
-                    node.Value = node.Value with { ByProcess = who };
-                }
-            }
-        }
+        _timeline.AttributeYoung(cutoff, AttributeOp);
     }
 
     private static readonly TimeSpan ReattributeWindow = TimeSpan.FromSeconds(12);
@@ -300,17 +266,7 @@ public sealed class FlightRecorder : IDisposable
         return path is null ? null : _attribution.Attribute(path, op.TimestampUtc, op.Kind);
     }
 
-    private void Add(FileOperation op)
-    {
-        lock (_recentLock)
-        {
-            _recent.AddFirst(op);
-            while (_recent.Count > _capacity)
-            {
-                _recent.RemoveLast();
-            }
-        }
-    }
+    private void Add(FileOperation op) => _timeline.Add(op);
 
     private void LoadCursors()
     {
@@ -352,6 +308,7 @@ public sealed class FlightRecorder : IDisposable
     {
         _timer.Dispose();
         _attribution.Dispose();
+        _timeline.Flush();
         SaveCursors();
     }
 }
