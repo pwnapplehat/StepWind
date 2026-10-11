@@ -381,6 +381,7 @@ body {
 .scroll-y { overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
 
 .tl-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding-right: 2px; }
+.tl-more { display: flex; justify-content: center; padding: 14px 0 6px; }
 
 .tl-day {
   position: sticky; top: 0; z-index: 2;

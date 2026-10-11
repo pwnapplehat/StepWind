@@ -3,47 +3,75 @@ using System.Text.Json;
 namespace StepWind.Core.Journal;
 
 /// <summary>
-/// The timeline the GUI shows. Two failures made creates and deletes disappear after a few
-/// minutes: the list lived only in memory (a service restart forgot it, and the USN cursor
-/// does not replay it), and a burst of ordinary modifies — a first scan of a big folder does
-/// this — pushed the creates and deletes out of the newest-N window.
+/// The timeline the GUI shows. Three failures made creates and deletes disappear for a user:
+/// the list lived only in memory (a service restart forgot it, and the USN cursor does not replay
+/// it); a burst of ordinary modifies pushed structural events out of one shared newest-N window;
+/// and the GUI only ever asked for the newest 1000 rows, so anything older than the first 1000
+/// newer events was unreachable even while it was still retained.
 ///
-/// Structural events (create, delete, move, rename) are kept ahead of modifies, and the list
-/// is written to disk so it is still there after the service starts again.
+/// Structural events (create, delete, move, rename) are kept ahead of modifies and have their own,
+/// much larger retention, so a flood of saves can never evict them. The list is written to disk so
+/// it is still there after the service starts again, and <see cref="Recent"/> can return the whole
+/// retained window in one read (see <see cref="MaxRetained"/>).
 /// </summary>
 public sealed class TimelineLog
 {
     /// <summary>How long a remembered operation stays. Older lines are dropped on load.</summary>
     public static readonly TimeSpan KeepFor = TimeSpan.FromDays(7);
 
+    /// <summary>Default number of structural operations (create, delete, move, rename) retained.</summary>
+    public const int DefaultStructuralCapacity = 20000;
+
     private readonly string _path;
-    private readonly int _capacity;
+    private readonly int _modifyCapacity;
+    private readonly int _structuralCapacity;
     private readonly object _lock = new();
     private readonly LinkedList<FileOperation> _recent = new(); // newest first
     private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
+    private int _modifyCount;
     private bool _dirty;
 
-    public TimelineLog(string path, int capacity = 5000)
+    /// <summary>
+    /// Creates a timeline backed by <paramref name="path"/> and loads whatever it already holds.
+    /// </summary>
+    /// <param name="path">JSON-lines file the timeline persists to.</param>
+    /// <param name="capacity">Maximum modify operations retained. The oldest modifies go first.</param>
+    /// <param name="structuralCapacity">Maximum create/delete/move/rename operations retained.</param>
+    public TimelineLog(string path, int capacity = 5000, int structuralCapacity = DefaultStructuralCapacity)
     {
         _path = path;
-        _capacity = Math.Max(1, capacity);
+        _modifyCapacity = Math.Max(1, capacity);
+        _structuralCapacity = Math.Max(1, structuralCapacity);
         Load();
     }
 
+    /// <summary>
+    /// The most operations this log can hold. A reader asking for this many gets the entire
+    /// retained window in one read, so nothing that is still kept can be out of reach.
+    /// </summary>
+    public int MaxRetained => _modifyCapacity + _structuralCapacity;
+
+    /// <summary>
+    /// Stable identity for an operation: file reference number, timestamp, and kind. Two different
+    /// operations never share all three, so the token can be persisted and used to find an entry.
+    /// </summary>
     public static string Token(FileOperation op)
         => $"{op.FileReferenceNumber}:{op.TimestampUtc.Ticks}:{(int)op.Kind}";
 
+    /// <summary>
+    /// Records an operation unless one with the same token is already held. Enforces the retention
+    /// caps immediately so memory stays bounded while the service runs.
+    /// </summary>
     public void Add(FileOperation op)
     {
         lock (_lock)
         {
-            string token = Token(op);
-            if (!_seen.Add(token))
+            if (!_seen.Add(Token(op)))
             {
                 return;
             }
 
-            _recent.AddFirst(op);
+            Insert(op);
             Trim();
             _dirty = true;
         }
@@ -102,6 +130,7 @@ public sealed class TimelineLog
         }
     }
 
+    /// <summary>Looks up a retained operation by its <see cref="Token"/>; null when it has aged out.</summary>
     public FileOperation? Find(string token)
     {
         lock (_lock)
@@ -142,6 +171,10 @@ public sealed class TimelineLog
         }
     }
 
+    /// <summary>
+    /// Writes the timeline to disk when it changed since the last write. The write goes through a
+    /// temp file and a move so a crash mid-write cannot leave a half-written timeline behind.
+    /// </summary>
     public void Flush()
     {
         List<FileOperation> snapshot;
@@ -183,26 +216,65 @@ public sealed class TimelineLog
         }
     }
 
-    private void Trim()
+    /// <summary>
+    /// Puts an operation at the newest end of the ring and keeps the modify count current.
+    /// The caller must already hold <c>_lock</c> and must have claimed the token in <c>_seen</c>.
+    /// </summary>
+    private void Insert(FileOperation op)
     {
-        while (_recent.Count > _capacity)
+        _recent.AddFirst(op);
+        if (op.Kind == OperationKind.Modify)
         {
-            LinkedListNode<FileOperation>? oldestModify = null;
-            for (LinkedListNode<FileOperation>? node = _recent.Last; node is not null; node = node.Previous)
-            {
-                if (node.Value.Kind == OperationKind.Modify)
-                {
-                    oldestModify = node;
-                    break;
-                }
-            }
-
-            LinkedListNode<FileOperation> drop = oldestModify ?? _recent.Last!;
-            _seen.Remove(Token(drop.Value));
-            _recent.Remove(drop);
+            _modifyCount++;
         }
     }
 
+    /// <summary>
+    /// Enforces both retention caps. Modifies go first when the modify cap is exceeded; structural
+    /// events are only dropped, oldest first, when they exceed their own (larger) cap. The caller
+    /// must hold <c>_lock</c>.
+    /// </summary>
+    private void Trim()
+    {
+        while (_modifyCount > _modifyCapacity && DropOldest(modifies: true))
+        {
+        }
+
+        while (_recent.Count - _modifyCount > _structuralCapacity && DropOldest(modifies: false))
+        {
+        }
+    }
+
+    /// <summary>
+    /// Removes the oldest operation of one class (modify, or structural). Returns false when none
+    /// of that class is held. The caller must hold <c>_lock</c>.
+    /// </summary>
+    private bool DropOldest(bool modifies)
+    {
+        for (LinkedListNode<FileOperation>? node = _recent.Last; node is not null; node = node.Previous)
+        {
+            if ((node.Value.Kind == OperationKind.Modify) != modifies)
+            {
+                continue;
+            }
+
+            _seen.Remove(Token(node.Value));
+            _recent.Remove(node);
+            if (modifies)
+            {
+                _modifyCount--;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Loads lines written by <see cref="Flush"/>, dropping anything older than <see cref="KeepFor"/>
+    /// and tolerating individually damaged lines. A missing or unreadable file starts an empty timeline.
+    /// </summary>
     private void Load()
     {
         try
@@ -235,16 +307,13 @@ public sealed class TimelineLog
                 }
             }
 
-            loaded.Sort(static (a, b) => a.TimestampUtc.CompareTo(b.TimestampUtc)); // oldest first, so AddFirst ends newest-first
+            loaded.Sort(static (a, b) => a.TimestampUtc.CompareTo(b.TimestampUtc)); // oldest first, so Insert ends newest-first
             foreach (FileOperation op in loaded)
             {
-                string token = Token(op);
-                if (!_seen.Add(token))
+                if (_seen.Add(Token(op)))
                 {
-                    continue;
+                    Insert(op);
                 }
-
-                _recent.AddFirst(op);
             }
 
             Trim();

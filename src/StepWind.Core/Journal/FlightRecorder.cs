@@ -76,6 +76,12 @@ public sealed class FlightRecorder : IDisposable
     public IReadOnlyList<FileOperation> Recent(int limit) => _timeline.Recent(limit);
 
     /// <summary>
+    /// The most operations the timeline can return in one read (its full retained size). Readers
+    /// that page through history clamp their requested limit to this instead of a fixed window.
+    /// </summary>
+    public int MaxRecent => _timeline.MaxRetained;
+
+    /// <summary>
     /// A stable, opaque handle for an operation in the ring. The GUI receives this on the
     /// timeline and passes it back to reverse the operation. Crucially it is NOT the operation's
     /// data: the server re-derives the real paths from its OWN ring entry, so a client can never

@@ -4,6 +4,26 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+## 1.0.8 — 2026-10-11
+
+**Creates and deletes stay reachable on a busy machine.** The timeline only ever showed the
+newest 1000 rows, so a burst of creates — a build, a package install, a large copy — pushed
+older creates and deletes past that window. They were still stored, but nothing could reach
+them. The timeline now pages through the whole retained history.
+
+### Fixed
+- **Timeline: "Show older" reaches the whole retained history.** The view requested a fixed
+  1000 rows. Each press of "Show older" now loads one more page, up to the full retained window.
+- **Creates and deletes have their own retention.** They shared one 5000-entry cap with ordinary
+  saves, so heavy structural activity could evict them. Creates, deletes, moves, and renames now
+  keep up to 20,000 entries; saves keep up to 5000 and are still dropped first.
+- **Undo all counts the rows you have loaded.** After "Show older", "Undo all N moves" covers every
+  loaded move or rename, not only the newest 1000. The confirmation still states the exact count.
+
+### Known limits
+- Once more than 20,000 structural operations are retained, the oldest are dropped first. A
+  single very large build or install can still exceed this within a few hours.
+
 ## 1.0.7 — 2026-10-10
 
 **Creates and deletes stay on the timeline.** They were only kept in memory, and only the

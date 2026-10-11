@@ -390,6 +390,15 @@ let tlProtectedOnly = false;
 let tlOps = [];
 let tlFingerprint = "";
 
+/* How many rows the timeline requests. It starts at one page and grows by one page each time
+   the user asks for older history, up to the service's whole retained window (TimelineLog
+   keeps up to 5000 modifies plus 20000 structural operations). Without this the GUI could only
+   ever see the newest 1000 rows, so a create or delete older than that looked deleted. */
+const TL_PAGE = 1000;
+const TL_MAX = 25000;
+let tlLimit = TL_PAGE;
+let tlHasMore = false;
+
 function describeOp(op) {
   switch (op.Kind) {
     case "Create": return `Created <span class="name">${esc(op.Name)}</span>`;
@@ -534,6 +543,9 @@ function renderTimeline(animate = false) {
       i++;
     }
   }
+  if (tlHasMore) {
+    html += `<div class="tl-more"><button class="btn" id="tl-older">Show older</button></div>`;
+  }
   html += "</div>";
   host.innerHTML = html;
 
@@ -550,6 +562,11 @@ function renderTimeline(animate = false) {
     call("patch", { patch: { TimelineProtectedOnly: protectedOnly } }).catch(() => { });
   }));
   $("#tl-refresh", host).onclick = () => loadTimeline(false, true);
+  const olderBtn = $("#tl-older", host);
+  if (olderBtn) olderBtn.onclick = () => {
+    tlLimit = Math.min(tlLimit + TL_PAGE, TL_MAX);
+    loadTimeline(false);
+  };
   const undoAll = $("#tl-undo-all", host);
   if (undoAll) undoAll.onclick = async () => {
     // Reverse every reversible operation currently shown (newest first) — the one-click undo of a
@@ -600,8 +617,10 @@ function renderTimeline(animate = false) {
 async function loadTimeline(silent, animate = false) {
   let json = "[]";
   try {
-    const data = (await call("timeline", { limit: 1000 })) || [];
+    const data = (await call("timeline", { limit: tlLimit })) || [];
     json = JSON.stringify(data);
+    // A full page means there may be older rows; the service has the same page size behind it.
+    tlHasMore = data.length >= tlLimit && tlLimit < TL_MAX;
     if (silent && json === tlFingerprint) return; // nothing changed — leave the DOM alone
     tlOps = data;
   } catch {

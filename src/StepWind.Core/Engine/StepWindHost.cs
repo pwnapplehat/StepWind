@@ -587,8 +587,18 @@ public sealed class StepWindHost : IDisposable
         WatchEngine watch = _watch; // local — ApplySettings can swap it under _watchLock
         var access = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase); // per-call dir cache
         var entries = new List<TimelineEntry>();
-        foreach (FileOperation op in recorder.Recent(limit))
+
+        // The page is counted AFTER the privacy/exclusion filters below, so walk the whole retained
+        // window newest-first and stop once the page is full. Capping the read first would make a
+        // page shorter than requested whenever rows were filtered out, which reads as "no more".
+        int page = Math.Clamp(limit, 0, recorder.MaxRecent);
+        foreach (FileOperation op in recorder.Recent(recorder.MaxRecent))
         {
+            if (entries.Count >= page)
+            {
+                break;
+            }
+
             // Privacy + integrity: a non-privileged caller only sees operations whose file lives
             // somewhere they can access, so they never learn about — nor receive a reverse handle
             // for — another user's file activity. This closes the cross-user timeline-read AND the
