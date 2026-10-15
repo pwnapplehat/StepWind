@@ -72,6 +72,81 @@ public class TimelineLogTests
         Assert.Equal(5000, all.Count(op => op.Kind == OperationKind.Modify));
     }
 
+    private static bool InProtected(FileOperation op) => (op.NewPath ?? op.OldPath ?? "").StartsWith(@"D:\Protected\", StringComparison.OrdinalIgnoreCase);
+
+    private static FileOperation ProtectedOp(OperationKind kind, int n, string name) => Op(kind, n, name) with
+    {
+        OldPath = kind == OperationKind.Delete ? $@"D:\Protected\{name}" : null,
+        NewPath = kind == OperationKind.Delete ? null : $@"D:\Protected\{name}",
+    };
+
+    [Fact]
+    public void A_protected_folder_create_outlasts_a_flood_of_structural_events_elsewhere()
+    {
+        var log = new TimelineLog(NewPath(), capacity: 100, structuralCapacity: 50, outlastsOthers: InProtected);
+        log.Add(ProtectedOp(OperationKind.Create, 1, "marker.txt"));
+        log.Add(ProtectedOp(OperationKind.Delete, 2, "gone.docx"));
+        for (int i = 3; i <= 500; i++)
+        {
+            log.Add(Op(OperationKind.Create, i)); // a build writing files somewhere else
+        }
+
+        IReadOnlyList<FileOperation> all = log.Recent(log.MaxRetained);
+        Assert.Contains(all, op => op.Name == "marker.txt");
+        Assert.Contains(all, op => op.Name == "gone.docx");
+        Assert.Equal(50, all.Count(op => op.Kind != OperationKind.Modify)); // the cap is still honoured
+    }
+
+    [Fact]
+    public void Without_the_rule_the_same_flood_does_evict_the_oldest_create()
+    {
+        var log = new TimelineLog(NewPath(), capacity: 100, structuralCapacity: 50);
+        log.Add(ProtectedOp(OperationKind.Create, 1, "marker.txt"));
+        for (int i = 2; i <= 500; i++)
+        {
+            log.Add(Op(OperationKind.Create, i));
+        }
+
+        Assert.DoesNotContain(log.Recent(log.MaxRetained), op => op.Name == "marker.txt");
+    }
+
+    [Fact]
+    public void Protected_events_are_still_capped_oldest_first_when_they_alone_exceed_the_cap()
+    {
+        var log = new TimelineLog(NewPath(), capacity: 100, structuralCapacity: 10, outlastsOthers: InProtected);
+        for (int i = 1; i <= 25; i++)
+        {
+            log.Add(ProtectedOp(OperationKind.Create, i, $"p-{i}.txt"));
+        }
+
+        IReadOnlyList<FileOperation> all = log.Recent(log.MaxRetained);
+        Assert.Equal(10, all.Count);
+        Assert.Equal("p-25.txt", all[0].Name);
+        Assert.DoesNotContain(all, op => op.Name == "p-15.txt");
+        Assert.Contains(all, op => op.Name == "p-16.txt");
+    }
+
+    [Fact]
+    public void A_protected_create_is_still_outlasting_after_a_restart_and_a_throwing_rule_never_blocks_recording()
+    {
+        string path = NewPath();
+        var first = new TimelineLog(path, capacity: 100, structuralCapacity: 5, outlastsOthers: InProtected);
+        first.Add(ProtectedOp(OperationKind.Create, 1, "marker.txt"));
+        first.Flush();
+
+        var restarted = new TimelineLog(path, capacity: 100, structuralCapacity: 5, outlastsOthers: InProtected);
+        for (int i = 2; i <= 40; i++)
+        {
+            restarted.Add(Op(OperationKind.Create, i));
+        }
+
+        Assert.Contains(restarted.Recent(restarted.MaxRetained), op => op.Name == "marker.txt");
+
+        var faulty = new TimelineLog(NewPath(), capacity: 10, outlastsOthers: _ => throw new InvalidOperationException("rule failed"));
+        faulty.Add(Op(OperationKind.Create, 1, "still-recorded.txt"));
+        Assert.Contains(faulty.Recent(10), op => op.Name == "still-recorded.txt");
+    }
+
     [Fact]
     public void Creates_and_deletes_are_still_there_after_a_restart()
     {

@@ -4,6 +4,25 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+## 1.0.9 — 2026-10-15
+
+**The timeline filters and "Show older" now work together.** With **Protected only** on, a burst
+of activity outside your protected folders (a build, an install, a big copy) left the timeline
+saying "Nothing here yet" while "Show older" stayed on screen, and pressing it showed nothing —
+the newest rows were all somewhere else and the view threw them away. Reproduced on a real
+Windows 11 machine with 1.0.8, then fixed.
+
+### Fixed
+- **Protected only, and the Creates / Deletes / Moves / Renames / Modifys chips, are applied by
+  the service before a page is counted.** A page of 1000 now means 1000 rows you asked to see,
+  so your protected-folder creates and deletes appear at the top no matter what else is
+  happening on the machine, and "Show older" loads more of exactly what is shown. Changing a
+  filter starts again from the newest page.
+- **Creates and deletes in your protected folders are the last to be dropped.** Once the
+  20,000-operation cap is reached, activity outside protected folders is dropped first, so a
+  build that writes thousands of files elsewhere can no longer push them out.
+- **The empty message under Protected only says what it means** and points at "All drives".
+
 ## 1.0.8 — 2026-10-11
 
 **Creates and deletes stay reachable on a busy machine.** The timeline only ever showed the

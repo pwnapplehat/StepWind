@@ -398,6 +398,19 @@ const TL_PAGE = 1000;
 const TL_MAX = 25000;
 let tlLimit = TL_PAGE;
 let tlHasMore = false;
+let tlLoadSeq = 0; // a slow reply for an old filter must never overwrite a newer one
+
+/* The kind chips and the "Protected only" switch are applied by the SERVICE, before it counts the
+   page. Filtering the newest N rows here instead hid everything whenever the newest rows were
+   all outside the protected folders — and "Show older" then fetched more rows that were hidden
+   the same way, so it looked broken. Changing a filter starts again from the first page. */
+function setTimelineFilter(change) {
+  change();
+  tlLimit = TL_PAGE;
+  tlHasMore = false;
+  tlFingerprint = "";
+  loadTimeline(false, true);
+}
 
 function describeOp(op) {
   switch (op.Kind) {
@@ -413,15 +426,6 @@ function describeOp(op) {
         `<span style="color:var(--text-3);font-size:11.5px"> ${esc(shortPath(op.OldPath))} → ${esc(shortPath(op.NewPath))}</span>`;
     default: return esc(op.Name);
   }
-}
-
-function opInProtectedFolder(op) {
-  for (const root of watchedFolders) {
-    const prefix = root.replace(/\\+$/, "") + "\\";
-    if ((op.OldPath || "").toLowerCase().startsWith(prefix.toLowerCase()) ||
-        (op.NewPath || "").toLowerCase().startsWith(prefix.toLowerCase())) return true;
-  }
-  return false;
 }
 
 // The action shown on the right of a timeline row:
@@ -478,8 +482,7 @@ function renderLockedRow() {
 
 function renderTimeline(animate = false) {
   const host = $("#view-timeline");
-  let ops = tlFilter === "All" ? tlOps : tlOps.filter((o) => o.Kind === tlFilter);
-  if (tlProtectedOnly) ops = ops.filter(opInProtectedFolder);
+  const ops = tlOps; // already filtered by the service for the current kind + scope
   const scroller = $(".tl-scroll", host);
   const keepScroll = scroller ? scroller.scrollTop : 0;
 
@@ -513,6 +516,8 @@ function renderTimeline(animate = false) {
   if (!ops.length) {
     const why = lastStatus && lastStatus.FlightRecorder === false
       ? "The flight recorder is off. Turn it on in Settings to record file operations across your drives."
+      : lastStatus && tlProtectedOnly
+        ? "No activity inside your protected folders matches this filter. Choose \"All drives\" to see everything StepWind recorded."
       : lastStatus
         ? "No file activity to show here yet. Move, rename, or delete a file and it'll show up — with one-click undo."
         : "Start the StepWind service to begin recording.";
@@ -553,12 +558,14 @@ function renderTimeline(animate = false) {
   if (newScroller && keepScroll) newScroller.scrollTop = keepScroll;
 
   if (animate) $$(".enter > .tl-row", host).forEach((r, idx) => stagger(r, idx));
-  $$(".chip[data-k]", host).forEach((c) => (c.onclick = () => { tlFilter = c.dataset.k; renderTimeline(true); }));
+  $$(".chip[data-k]", host).forEach((c) => (c.onclick = () => {
+    if (c.dataset.k === tlFilter) return;
+    setTimelineFilter(() => { tlFilter = c.dataset.k; });
+  }));
   $$(".chip[data-scope]", host).forEach((c) => (c.onclick = () => {
     const protectedOnly = c.dataset.scope === "protected";
     if (protectedOnly === tlProtectedOnly) return;
-    tlProtectedOnly = protectedOnly;
-    renderTimeline(true);
+    setTimelineFilter(() => { tlProtectedOnly = protectedOnly; });
     call("patch", { patch: { TimelineProtectedOnly: protectedOnly } }).catch(() => { });
   }));
   $("#tl-refresh", host).onclick = () => loadTimeline(false, true);
@@ -616,14 +623,22 @@ function renderTimeline(animate = false) {
 
 async function loadTimeline(silent, animate = false) {
   let json = "[]";
+  const seq = ++tlLoadSeq;
   try {
-    const data = (await call("timeline", { limit: tlLimit })) || [];
+    const data = (await call("timeline", {
+      limit: tlLimit,
+      kind: tlFilter === "All" ? "" : tlFilter,
+      scope: tlProtectedOnly ? "protected" : "all",
+    })) || [];
+    if (seq !== tlLoadSeq) return; // a newer request (filter change, Show older) owns the screen
     json = JSON.stringify(data);
-    // A full page means there may be older rows; the service has the same page size behind it.
+    // A full page means there may be older rows. The service counts the page after it filters,
+    // so a full page really is a full page of what is being shown.
     tlHasMore = data.length >= tlLimit && tlLimit < TL_MAX;
     if (silent && json === tlFingerprint) return; // nothing changed — leave the DOM alone
     tlOps = data;
   } catch {
+    if (seq !== tlLoadSeq) return;
     if (silent) return;
     tlOps = [];
   }

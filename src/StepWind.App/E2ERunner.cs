@@ -143,7 +143,7 @@ public partial class MainWindow
             // The move is on the Desktop (outside protected folders). If the timeline scope is
             // "Protected only" it's correctly filtered out — force "All drives" so the whole-
             // machine flight recorder's entry (the thing under test) is actually visible.
-            await Js("tlProtectedOnly = false; renderTimeline();");
+            await Js("tlProtectedOnly = false; tlFilter = 'All'; tlLimit = TL_PAGE;");
             await Js("loadTimeline(false)");
             bool undoBtn = await WaitJs(
                 $"[...document.querySelectorAll('.tl-row')].some(r => r.textContent.includes('{movedName}') && r.querySelector('.tl-undo'))", 15000);

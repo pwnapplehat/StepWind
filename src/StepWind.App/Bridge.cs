@@ -75,7 +75,8 @@ public sealed class Bridge(MainWindow window)
         // ── service pipe: reads ──
         "status" => await PipeAsync(IpcCommand.GetStatus),
         "settings" => await PipeAsync(IpcCommand.GetSettings),
-        "timeline" => await PipeAsync(IpcCommand.GetTimeline, limit: p?["limit"]?.GetValue<int>() ?? 250),
+        "timeline" => await PipeAsync(IpcCommand.GetTimeline,
+            p?["kind"]?.GetValue<string>(), p?["scope"]?.GetValue<string>(), p?["limit"]?.GetValue<int>() ?? 250),
         "recent" => await PipeAsync(IpcCommand.GetRecentFiles, limit: p?["limit"]?.GetValue<int>() ?? 60),
         "browse" => await PipeAsync(IpcCommand.BrowseVersions,
             p?["path"]?.GetValue<string>() ?? "", p?["query"]?.GetValue<string>(), 500),

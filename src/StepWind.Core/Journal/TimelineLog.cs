@@ -28,6 +28,8 @@ public sealed class TimelineLog
     private readonly object _lock = new();
     private readonly LinkedList<FileOperation> _recent = new(); // newest first
     private readonly HashSet<string> _seen = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _outlasting = new(StringComparer.Ordinal); // structural tokens that go last
+    private readonly Func<FileOperation, bool>? _outlastsOthers;
     private int _modifyCount;
     private bool _dirty;
 
@@ -37,11 +39,19 @@ public sealed class TimelineLog
     /// <param name="path">JSON-lines file the timeline persists to.</param>
     /// <param name="capacity">Maximum modify operations retained. The oldest modifies go first.</param>
     /// <param name="structuralCapacity">Maximum create/delete/move/rename operations retained.</param>
-    public TimelineLog(string path, int capacity = 5000, int structuralCapacity = DefaultStructuralCapacity)
+    /// <param name="outlastsOthers">
+    /// Marks structural operations that matter most (those inside a protected folder). When the
+    /// structural cap is reached every other structural operation is dropped first, so a build that
+    /// writes thousands of files somewhere else cannot push your protected-folder creates and
+    /// deletes out. Evaluated once, when the operation is recorded.
+    /// </param>
+    public TimelineLog(string path, int capacity = 5000, int structuralCapacity = DefaultStructuralCapacity,
+        Func<FileOperation, bool>? outlastsOthers = null)
     {
         _path = path;
         _modifyCapacity = Math.Max(1, capacity);
         _structuralCapacity = Math.Max(1, structuralCapacity);
+        _outlastsOthers = outlastsOthers;
         Load();
     }
 
@@ -227,6 +237,22 @@ public sealed class TimelineLog
         {
             _modifyCount++;
         }
+        else if (OutlastsOthers(op))
+        {
+            _outlasting.Add(Token(op));
+        }
+    }
+
+    private bool OutlastsOthers(FileOperation op)
+    {
+        try
+        {
+            return _outlastsOthers?.Invoke(op) == true;
+        }
+        catch
+        {
+            return false; // a failing rule must never stop an operation from being recorded
+        }
     }
 
     /// <summary>
@@ -247,10 +273,13 @@ public sealed class TimelineLog
 
     /// <summary>
     /// Removes the oldest operation of one class (modify, or structural). Returns false when none
-    /// of that class is held. The caller must hold <c>_lock</c>.
+    /// of that class is held. Among structural operations the oldest one that does NOT outlast the
+    /// others goes first; a protected-folder operation is only dropped once nothing else is left to
+    /// drop. The caller must hold <c>_lock</c>.
     /// </summary>
     private bool DropOldest(bool modifies)
     {
+        LinkedListNode<FileOperation>? fallback = null;
         for (LinkedListNode<FileOperation>? node = _recent.Last; node is not null; node = node.Previous)
         {
             if ((node.Value.Kind == OperationKind.Modify) != modifies)
@@ -258,17 +287,35 @@ public sealed class TimelineLog
                 continue;
             }
 
-            _seen.Remove(Token(node.Value));
-            _recent.Remove(node);
-            if (modifies)
+            if (!modifies && _outlasting.Contains(Token(node.Value)))
             {
-                _modifyCount--;
+                fallback ??= node; // the oldest protected one — dropped only if nothing else can be
+                continue;
             }
 
+            Remove(node, modifies);
+            return true;
+        }
+
+        if (fallback is not null)
+        {
+            Remove(fallback, modifies);
             return true;
         }
 
         return false;
+    }
+
+    private void Remove(LinkedListNode<FileOperation> node, bool modifies)
+    {
+        string token = Token(node.Value);
+        _seen.Remove(token);
+        _outlasting.Remove(token);
+        _recent.Remove(node);
+        if (modifies)
+        {
+            _modifyCount--;
+        }
     }
 
     /// <summary>

@@ -38,7 +38,8 @@ public sealed class FlightRecorder : IDisposable
     private readonly Func<string, bool>? _skipVolume;
 
     public FlightRecorder(string stateDir, IEnumerable<string> volumes, int capacity = 5000,
-        Action<string>? log = null, IEnumerable<string>? ignorePrefixes = null, Func<string, bool>? skipVolume = null)
+        Action<string>? log = null, IEnumerable<string>? ignorePrefixes = null, Func<string, bool>? skipVolume = null,
+        Func<FileOperation, bool>? inProtectedFolder = null)
     {
         _cursorPath = System.IO.Path.Combine(stateDir, "usn-cursors.json");
         _capacity = capacity;
@@ -50,7 +51,8 @@ public sealed class FlightRecorder : IDisposable
         _ignorePrefixes = [.. (ignorePrefixes ?? []).Append(stateDir)
             .Select(p => p.TrimEnd('\\', '/')).Where(p => p.Length > 0)];
         System.IO.Directory.CreateDirectory(stateDir);
-        _timeline = new TimelineLog(System.IO.Path.Combine(stateDir, "timeline.jsonl"), _capacity);
+        _timeline = new TimelineLog(System.IO.Path.Combine(stateDir, "timeline.jsonl"), _capacity,
+            outlastsOthers: inProtectedFolder);
         LoadCursors();
         _attribution.Start();
 

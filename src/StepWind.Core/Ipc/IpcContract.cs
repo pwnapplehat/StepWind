@@ -21,7 +21,7 @@ public enum IpcCommand
 {
     Ping = 0,
     GetStatus = 1,
-    GetTimeline = 2,      // recent operations (flight recorder)
+    GetTimeline = 2,      // recent operations (flight recorder); Arg1 = kind filter, Arg2 = "protected" for protected folders only — both applied before Limit counts the page
     GetHistory = 3,       // versions of one file
     ReverseOperation = 4,
     RestoreVersion = 5,

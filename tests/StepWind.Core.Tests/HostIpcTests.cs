@@ -1,6 +1,7 @@
 using System.Text.Json;
 using StepWind.Core.Engine;
 using StepWind.Core.Ipc;
+using StepWind.Core.Journal;
 using StepWind.Core.Storage;
 using Xunit;
 
@@ -77,6 +78,105 @@ public class HostIpcTests : IDisposable
         IpcResponse r = _host.Handle(new IpcRequest { Command = IpcCommand.GetTimeline });
         Assert.True(r.Ok);
         Assert.Empty(JsonSerializer.Deserialize<TimelineEntry[]>(r.Json!)!);
+    }
+
+    // ── Timeline paging with filters (HillsCloud, 1.0.8: "Show older" did nothing, creates vanished).
+    //    The GUI filtered the newest N rows itself, so a burst of activity OUTSIDE the protected
+    //    folders left nothing to show. The service must filter first and count the page after. ──
+
+    private static FileOperation TlOp(OperationKind kind, int n, string path) => new()
+    {
+        Kind = kind,
+        FileReferenceNumber = (ulong)(5000 + n),
+        TimestampUtc = new DateTime(2026, 10, 14, 8, 0, 0, DateTimeKind.Utc).AddSeconds(n),
+        Name = Path.GetFileName(path),
+        OldPath = kind == OperationKind.Delete ? path : null,
+        NewPath = kind == OperationKind.Delete ? null : path,
+    };
+
+    /// <summary>Newest first, as <c>TimelineLog.Recent</c> hands them over.</summary>
+    private static List<FileOperation> NewestFirst(IEnumerable<FileOperation> ops)
+        => [.. ops.OrderByDescending(o => o.TimestampUtc)];
+
+    private List<TimelineEntry> Page(IEnumerable<FileOperation> ops, int limit, string? kind, string? scope)
+        => _host.BuildTimelineFrom(NewestFirst(ops), 25000, limit, kind, scope, CallerContext.LocalTrusted);
+
+    [Fact]
+    public void Protected_only_finds_a_create_buried_under_a_thousand_newer_events_elsewhere()
+    {
+        string outside = Path.Combine(_root, "Elsewhere");
+        var ops = new List<FileOperation> { TlOp(OperationKind.Create, 1, Path.Combine(_watch, "marker.txt")) };
+        for (int i = 2; i <= 1500; i++)
+        {
+            ops.Add(TlOp(OperationKind.Create, i, Path.Combine(outside, $"noise-{i}.txt")));
+        }
+
+        // Without the scope filter the marker is past the first 1000 rows — this is what the user saw.
+        Assert.DoesNotContain(Page(ops, 1000, null, "all"), e => e.Name == "marker.txt");
+
+        // With it, the first page is made of protected rows, so the marker is right there.
+        List<TimelineEntry> page = Page(ops, 1000, null, "protected");
+        Assert.Single(page);
+        Assert.Equal("marker.txt", page[0].Name);
+    }
+
+    [Fact]
+    public void A_kind_filter_reaches_a_delete_older_than_a_thousand_newer_modifies_and_creates()
+    {
+        var ops = new List<FileOperation> { TlOp(OperationKind.Delete, 1, Path.Combine(_watch, "gone.docx")) };
+        for (int i = 2; i <= 600; i++)
+        {
+            ops.Add(TlOp(OperationKind.Modify, i, Path.Combine(_watch, $"m-{i}.txt")));
+            ops.Add(TlOp(OperationKind.Create, i + 1000, Path.Combine(_watch, $"c-{i}.txt")));
+        }
+
+        Assert.DoesNotContain(Page(ops, 1000, "", null), e => e.Name == "gone.docx");
+
+        List<TimelineEntry> deletes = Page(ops, 1000, "Delete", null);
+        Assert.Single(deletes);
+        Assert.Equal("gone.docx", deletes[0].Name);
+        Assert.Equal("Delete", deletes[0].Kind);
+    }
+
+    [Fact]
+    public void A_full_protected_page_means_more_older_rows_exist_and_a_bigger_page_returns_them()
+    {
+        var ops = new List<FileOperation>();
+        for (int i = 1; i <= 1500; i++)
+        {
+            // Every third row is outside, so the filter really has to skip rows to fill a page.
+            string dir = i % 3 == 0 ? Path.Combine(_root, "Elsewhere") : _watch;
+            ops.Add(TlOp(OperationKind.Create, i, Path.Combine(dir, $"f-{i}.txt")));
+        }
+
+        Assert.Equal(1000, Page(ops, 1000, null, "protected").Count); // full page: the GUI offers "Show older"
+        Assert.Equal(1000, Page(ops, 2000, null, "protected").Count); // 1500 rows, 500 outside → exactly 1000 protected
+    }
+
+    [Fact]
+    public void A_move_into_a_protected_folder_counts_as_protected_activity()
+    {
+        var move = new FileOperation
+        {
+            Kind = OperationKind.Move,
+            FileReferenceNumber = 9001,
+            TimestampUtc = new DateTime(2026, 10, 14, 9, 0, 0, DateTimeKind.Utc),
+            Name = "report.docx",
+            OldPath = Path.Combine(_root, "Elsewhere", "report.docx"),
+            NewPath = Path.Combine(_watch, "report.docx"),
+        };
+
+        Assert.Single(Page([move], 100, null, "protected"));
+    }
+
+    [Fact]
+    public void An_unknown_or_numeric_kind_is_ignored_rather_than_hiding_everything()
+    {
+        var ops = new[] { TlOp(OperationKind.Create, 1, Path.Combine(_watch, "a.txt")) };
+
+        Assert.Single(Page(ops, 10, "Bogus", null));
+        Assert.Single(Page(ops, 10, "99", null));
+        Assert.Single(Page(ops, 10, "All", null));
     }
 
     [Fact]

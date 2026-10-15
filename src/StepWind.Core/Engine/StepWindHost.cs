@@ -217,7 +217,8 @@ public sealed class StepWindHost : IDisposable
         {
             _flightRecorder = new FlightRecorder(_settings.StoreRoot, FixedJournalCandidates(), log: _log,
                 ignorePrefixes: new[] { StepWindSettings.DefaultRoot, _settings.StoreRoot },
-                skipVolume: volume => _settings.IsVolumeIgnored(volume));
+                skipVolume: volume => _settings.IsVolumeIgnored(volume),
+                inProtectedFolder: op => TouchesProtectedFolder(op, _watch));
             return null;
         }
         catch (Exception ex)
@@ -317,7 +318,7 @@ public sealed class StepWindHost : IDisposable
             {
                 IpcCommand.Ping => IpcResponse.Success("\"pong\""),
                 IpcCommand.GetStatus => Ok(BuildStatus(caller)),
-                IpcCommand.GetTimeline => Ok(BuildTimeline(request.Limit, caller)),
+                IpcCommand.GetTimeline => Ok(BuildTimeline(request.Limit, request.Arg1, request.Arg2, caller)),
                 IpcCommand.GetHistory => GetHistory(request.Arg1 ?? "", caller),
                 IpcCommand.GetRecentFiles => Ok(BuildRecentFiles(request.Limit, caller)),
                 IpcCommand.ReverseOperation => ReverseOperation(request.Arg1 ?? "", caller),
@@ -576,7 +577,7 @@ public sealed class StepWindHost : IDisposable
         try { return File.Exists(path) ? new FileInfo(path).Length : 0; } catch { return 0; }
     }
 
-    private List<TimelineEntry> BuildTimeline(int limit, CallerContext caller)
+    private List<TimelineEntry> BuildTimeline(int limit, string? kind, string? scope, CallerContext caller)
     {
         FlightRecorder? recorder = _flightRecorder; // local copy — the toggle can swap it
         if (recorder is null)
@@ -584,19 +585,48 @@ public sealed class StepWindHost : IDisposable
             return [];
         }
 
+        return BuildTimelineFrom(recorder.Recent(recorder.MaxRecent), recorder.MaxRecent, limit, kind, scope, caller);
+    }
+
+    /// <summary>
+    /// Turns the retained operations (newest first) into one page for <paramref name="caller"/>.
+    /// <paramref name="kind"/> ("Create", "Delete", "Move", "Rename", "Modify"; null/empty = all) and
+    /// <paramref name="scope"/> ("protected" = only operations inside a protected folder; anything
+    /// else = every drive) are applied HERE, before the page is counted. The GUI used to filter the
+    /// newest N rows itself, so a burst of activity outside your protected folders left nothing to
+    /// show and "Show older" fetched more rows that were filtered away the same way.
+    /// </summary>
+    internal List<TimelineEntry> BuildTimelineFrom(IEnumerable<FileOperation> retained, int maxRetained,
+        int limit, string? kind, string? scope, CallerContext caller)
+    {
         WatchEngine watch = _watch; // local — ApplySettings can swap it under _watchLock
         var access = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase); // per-call dir cache
         var entries = new List<TimelineEntry>();
 
-        // The page is counted AFTER the privacy/exclusion filters below, so walk the whole retained
-        // window newest-first and stop once the page is full. Capping the read first would make a
-        // page shorter than requested whenever rows were filtered out, which reads as "no more".
-        int page = Math.Clamp(limit, 0, recorder.MaxRecent);
-        foreach (FileOperation op in recorder.Recent(recorder.MaxRecent))
+        OperationKind? wantedKind = Enum.TryParse(kind, ignoreCase: true, out OperationKind parsed) && Enum.IsDefined(parsed)
+            ? parsed
+            : null;
+        bool protectedOnly = string.Equals(scope, "protected", StringComparison.OrdinalIgnoreCase);
+
+        // The page is counted AFTER the privacy/exclusion/kind/scope filters below, so walk the whole
+        // retained window newest-first and stop once the page is full. Capping the read first would
+        // make a page shorter than requested whenever rows were filtered out, which reads as "no more".
+        int page = Math.Clamp(limit, 0, maxRetained);
+        foreach (FileOperation op in retained)
         {
             if (entries.Count >= page)
             {
                 break;
+            }
+
+            if (wantedKind is { } k && op.Kind != k)
+            {
+                continue;
+            }
+
+            if (protectedOnly && !IsInProtectedFolder(caller, op, watch))
+            {
+                continue;
             }
 
             // Privacy + integrity: a non-privileged caller only sees operations whose file lives
@@ -636,6 +666,34 @@ public sealed class StepWindHost : IDisposable
         }
 
         return entries;
+    }
+
+    /// <summary>
+    /// Whether an operation touches a protected folder the caller may see — the same root test the
+    /// version store uses, so the "Protected only" timeline and version history never disagree.
+    /// A move or rename counts when either end is inside one.
+    /// </summary>
+    private static bool TouchesProtectedFolder(FileOperation op, WatchEngine watch)
+        => (op.NewPath is { Length: > 0 } n && watch.RelativeToRoot(n) is not null)
+           || (op.OldPath is { Length: > 0 } o && watch.RelativeToRoot(o) is not null);
+
+    private bool IsInProtectedFolder(CallerContext caller, FileOperation op, WatchEngine watch)
+    {
+        foreach (string? path in new[] { op.NewPath, op.OldPath })
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                continue;
+            }
+
+            string? rel = watch.RelativeToRoot(path);
+            if (rel is not null && CallerCanAccessRelative(caller, rel))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
