@@ -4,6 +4,36 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
+## 1.0.10 — 2026-10-16
+
+**Adding or changing a protected folder no longer stops saving until the next restart, a
+protected folder is never skipped because of where it lives, and an empty history now says the
+real reason.** A report of "0 versions, 0 B — every file scanned is excluded" had two real causes,
+both reproduced on a Windows 11 machine and fixed here.
+
+### Fixed
+- **Saving stopped after you added a folder, until the service restarted.** Changing the
+  protected folders (add, remove, exclude) rebuilds the watcher, and the scan and watcher timers
+  it starts were running as the Windows account that made the change instead of as the service.
+  That account has no access to the history store, so every save failed with "access denied" —
+  the new folder's existing files, and live edits in every folder, none were saved. Requests now
+  always run as the service. After adding a folder the scan saves its files and live edits keep
+  being captured, in the old folders and the new one.
+- **Folder-name rules only judge folders below the protected folder.** The built-in rule for
+  `build`, `dist`, `out`, `bin`, `env`, `target`, `venv`, `obj`, … looked at the WHOLE path,
+  including the folders above the protected folder, so a protected folder inside — or itself
+  named — one of those had every file skipped, by the startup scan and by live saves.
+  `D:\build\Docs`, `D:\out\bin\Projects`, or a protected folder called `dist` are versioned
+  normally. A `node_modules`, `obj`, `.git`, … folder *inside* a protected folder is still skipped.
+- **Folder-name rules only judge folders below the protected folder.** `D:\build\Docs`,
+  `D:\out\bin\Projects`, or a protected folder called `dist` are versioned normally. A
+  `node_modules`, `obj`, `.git`, … folder *inside* a protected folder is still skipped.
+- **The status line says what actually happened.** The startup scan used to answer "Every file
+  scanned is excluded" whenever it skipped anything as excluded and saved nothing, even when the
+  real reason was a file it could not read. It now lists each reason with its count, for example
+  "Nothing new was saved: 4 skipped by exclusion rules (4 .log files)" or "1 could not be saved
+  (IOException: …)". Files that fail to save are counted and logged instead of silently ignored.
+
 ## 1.0.9 — 2026-10-15
 
 **The timeline filters and "Show older" now work together.** With **Protected only** on, a burst

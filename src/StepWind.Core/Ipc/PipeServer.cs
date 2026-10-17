@@ -2,6 +2,7 @@ using System.IO.Pipes;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using Microsoft.Win32.SafeHandles;
 using System.Text;
 using System.Text.Json;
 
@@ -133,7 +134,7 @@ public sealed class PipeServer : IDisposable
             IpcRequest? request = JsonSerializer.Deserialize<IpcRequest>(line);
             response = request is null ? IpcResponse.Fail("bad request")
                 : request.Version != IpcProtocol.Version ? IpcResponse.Fail("version mismatch")
-                : _handler(request, ResolveCaller(server));
+                : InvokeAsService(request, ResolveCaller(server));
         }
         catch (Exception ex)
         {
@@ -141,6 +142,21 @@ public sealed class PipeServer : IDisposable
         }
 
         await writer.WriteLineAsync(JsonSerializer.Serialize(response));
+    }
+
+    /// <summary>
+    /// Runs the handler under the service's OWN identity. Resolving the caller impersonates the pipe
+    /// client, and that identity was leaking into everything a request starts: the background scan
+    /// and the watcher/capture timers built when a folder is added ran as the unprivileged user,
+    /// who has no access to the store, so every capture failed with "access denied" until the
+    /// service restarted. Reads that must use the caller's rights still impersonate explicitly
+    /// (<see cref="RootAccess.CallerCanReadDirectory"/>), for just that check.
+    /// </summary>
+    private IpcResponse InvokeAsService(IpcRequest request, CallerContext caller)
+    {
+        IpcResponse? response = null;
+        WindowsIdentity.RunImpersonated(SafeAccessTokenHandle.InvalidHandle, () => response = _handler(request, caller));
+        return response ?? IpcResponse.Fail("no response");
     }
 
     /// <summary>

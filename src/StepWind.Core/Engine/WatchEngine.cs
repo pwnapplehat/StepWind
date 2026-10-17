@@ -313,7 +313,7 @@ public sealed class WatchEngine : IDisposable
     private void OnCreated(object sender, FileSystemEventArgs e)
     {
         string fullPath = e.FullPath;
-        if (_exclusions.IsExcludedByDirectory(fullPath) || _exclusions.IsExcludedByExtension(fullPath)
+        if (_exclusions.IsExcludedByDirectory(fullPath, RootOf(fullPath)) || _exclusions.IsExcludedByExtension(fullPath)
             || _exclusions.IsUnderExcludedPrefix(fullPath))
         {
             return;
@@ -339,7 +339,7 @@ public sealed class WatchEngine : IDisposable
     private void OnPath(string fullPath)
     {
         // Cheap pre-filter here; the full attribute/size check happens at capture time.
-        if (_exclusions.IsExcludedByDirectory(fullPath) || _exclusions.IsExcludedByExtension(fullPath)
+        if (_exclusions.IsExcludedByDirectory(fullPath, RootOf(fullPath)) || _exclusions.IsExcludedByExtension(fullPath)
             || _exclusions.IsUnderExcludedPrefix(fullPath))
         {
             return;
@@ -425,7 +425,7 @@ public sealed class WatchEngine : IDisposable
             // Read attributes via the extended-length path so a deep (>260-char) file is versioned
             // rather than throwing PathTooLong; exclusions/relative-path use the plain path.
             var info = new FileInfo(Storage.LongPath.Of(fullPath));
-            if (!_exclusions.ShouldVersion(fullPath, info.Attributes, info.Length))
+            if (!_exclusions.ShouldVersion(fullPath, info.Attributes, info.Length, RootOf(fullPath)))
             {
                 return false;
             }
@@ -462,7 +462,7 @@ public sealed class WatchEngine : IDisposable
         }
         catch (Exception ex)
         {
-            _log?.Invoke($"capture failed for {fullPath}: {ex.Message}");
+            _log?.Invoke($"capture failed for {fullPath} (running as {RunningAs()}): {ex}");
             return false;
         }
     }
@@ -486,8 +486,13 @@ public sealed class WatchEngine : IDisposable
         int cloud = 0;
         int excluded = 0;
         int other = 0;
+        int failed = 0;
+        int unchanged = 0;
+        string? firstFailure = null;
+        var excludedWhy = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         string endNote = "Scan finished and nothing was saved.";
         PublishCatchUp(true, 0, 0, 0, 0, "Saving files already in protected folders…");
+        _log?.Invoke($"catch-up: starting (running as {RunningAs()})");
         try
         {
         if (_roots.Count == 0)
@@ -537,10 +542,10 @@ public sealed class WatchEngine : IDisposable
 
                 try
                 {
-                    if (_exclusions.IsExcludedByDirectory(path) || _exclusions.IsExcludedByExtension(path)
-                        || _exclusions.IsUnderExcludedPrefix(path))
+                    if (_exclusions.ExclusionReason(path, root) is { } why)
                     {
                         excluded++;
+                        excludedWhy[why] = excludedWhy.GetValueOrDefault(why) + 1;
                         continue;
                     }
 
@@ -551,7 +556,7 @@ public sealed class WatchEngine : IDisposable
                         continue;
                     }
 
-                    if (!_exclusions.ShouldVersion(path, info.Attributes, info.Length))
+                    if (!_exclusions.ShouldVersion(path, info.Attributes, info.Length, root))
                     {
                         other++;
                         continue;
@@ -575,6 +580,7 @@ public sealed class WatchEngine : IDisposable
                     FileVersion? latest = _store.Log.LatestFor(NormalizeRel(rel));
                     if (latest is not null && info.LastWriteTimeUtc <= latest.ModifiedUtc)
                     {
+                        unchanged++;
                         continue;
                     }
 
@@ -585,22 +591,21 @@ public sealed class WatchEngine : IDisposable
                         PublishCatchUp(true, captured, cloud, excluded, other, $"Saving existing files… {captured} saved");
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    other++;
+                    // Not "excluded": the file passed every rule and still could not be saved. Say
+                    // so, with the first reason, instead of leaving the user guessing.
+                    failed++;
+                    firstFailure ??= $"{ex.GetType().Name}: {ex.Message}";
+                    _log?.Invoke($"catch-up: could not save {path} (running as {RunningAs()}): {ex}");
                 }
             }
         }
 
-        if (captured > 0 || cloud > 0 || excluded > 0 || endNote == "Scan finished and nothing was saved.")
+        if (captured > 0 || cloud > 0 || excluded > 0 || failed > 0 || other > 0 || unchanged > 0
+            || endNote == "Scan finished and nothing was saved.")
         {
-            endNote = captured > 0
-                ? $"Saved {captured} file(s)."
-                : cloud > 0
-                    ? $"{cloud} files are online-only cloud copies, so they were not saved."
-                    : excluded > 0
-                        ? "Every file scanned is excluded, so nothing was saved."
-                        : "Scan finished and nothing was saved.";
+            endNote = DescribeScan(captured, cloud, excludedWhy, other, failed, firstFailure, unchanged);
         }
 
         return captured;
@@ -616,6 +621,52 @@ public sealed class WatchEngine : IDisposable
             PublishCatchUp(false, captured, cloud, excluded, other, endNote);
             _log?.Invoke("catch-up: " + endNote);
         }
+    }
+
+    /// <summary>
+    /// One honest sentence for the status line after a scan. It names every reason files were not
+    /// saved with its real count — never "everything is excluded" unless that is what happened.
+    /// </summary>
+    internal static string DescribeScan(int captured, int cloud, IReadOnlyDictionary<string, int> excludedWhy,
+        int other, int failed, string? firstFailure, int unchanged)
+    {
+        if (captured > 0)
+        {
+            return $"Saved {captured} file(s).";
+        }
+
+        var parts = new List<string>();
+        if (failed > 0)
+        {
+            parts.Add($"{failed} could not be saved ({firstFailure})");
+        }
+
+        if (cloud > 0)
+        {
+            parts.Add($"{cloud} are online-only cloud copies, so they were not saved");
+        }
+
+        int excluded = excludedWhy.Values.Sum();
+        if (excluded > 0)
+        {
+            string top = string.Join(", ", excludedWhy.OrderByDescending(kv => kv.Value).Take(3)
+                .Select(kv => $"{kv.Value} {kv.Key}"));
+            parts.Add($"{excluded} skipped by exclusion rules ({top})");
+        }
+
+        if (other > 0)
+        {
+            parts.Add($"{other} skipped (too large, a link, or ignored by .gitignore)");
+        }
+
+        if (unchanged > 0)
+        {
+            parts.Add($"{unchanged} already saved");
+        }
+
+        return parts.Count == 0
+            ? "Scan finished and nothing was saved."
+            : "Nothing new was saved: " + string.Join("; ", parts) + ".";
     }
 
     /// <summary>
@@ -647,6 +698,34 @@ public sealed class WatchEngine : IDisposable
     }
 
     private static string NormalizeRel(string rel) => rel.Replace('\\', '/').TrimStart('/');
+
+    /// <summary>The Windows account this thread is acting as, for diagnostics only.</summary>
+    internal static string RunningAs()
+    {
+        try
+        {
+            using var id = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return id.Name;
+        }
+        catch
+        {
+            return "unknown";
+        }
+    }
+
+    /// <summary>The watched root that contains <paramref name="fullPath"/>, or null.</summary>
+    private string? RootOf(string fullPath)
+    {
+        foreach (string root in _roots)
+        {
+            if (fullPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return root;
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>Path relative to whichever watched root contains it (portable '/' form).</summary>
     public string? RelativeToRoot(string fullPath)

@@ -1090,7 +1090,7 @@ public sealed class StepWindHost : IDisposable
                 rebuilt = _watch;
             }
 
-            _log?.Invoke($"watched folders updated ({_settings.WatchedFolders.Count})");
+            _log?.Invoke($"watched folders updated ({_settings.WatchedFolders.Count}) by {Actor(caller)}; applying as {WatchEngine.RunningAs()}");
 
             // A newly added folder needs a baseline immediately (its files existed before we
             // watched it), so reconcile in the background rather than waiting for edits.

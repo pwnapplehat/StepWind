@@ -38,18 +38,64 @@ public sealed class PathExclusions
     public void ExcludePrefix(string absolutePrefix)
         => _extraPrefixes.Add(absolutePrefix.TrimEnd('\\', '/'));
 
-    /// <summary>True if any path segment is an excluded directory name.</summary>
-    public bool IsExcludedByDirectory(string fullPath)
+    /// <summary>
+    /// True if any path segment is an excluded directory name. When <paramref name="root"/> (the
+    /// protected folder the file lives in) is given, only the part BELOW it is judged: the user
+    /// chose that folder on purpose, so a protected folder that happens to sit under — or be named —
+    /// "build", "dist", "out", "env" and so on must not have every file in it skipped.
+    /// </summary>
+    public bool IsExcludedByDirectory(string fullPath, string? root = null)
+        => ExcludedDirectoryName(fullPath, root) is not null;
+
+    /// <summary>The excluded directory name that applies to <paramref name="fullPath"/>, or null.</summary>
+    public string? ExcludedDirectoryName(string fullPath, string? root = null)
     {
-        foreach (string segment in fullPath.Split('\\', '/'))
+        foreach (string segment in BelowRoot(fullPath, root).Split('\\', '/'))
         {
             if (ExcludedDirNames.Contains(segment))
             {
-                return true;
+                return segment;
             }
         }
 
-        return false;
+        return null;
+    }
+
+    private static string BelowRoot(string fullPath, string? root)
+    {
+        if (string.IsNullOrEmpty(root))
+        {
+            return fullPath;
+        }
+
+        string trimmed = root.TrimEnd('\\', '/');
+        if (trimmed.Length > 0 && fullPath.Length > trimmed.Length
+            && fullPath.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase)
+            && (fullPath[trimmed.Length] == '\\' || fullPath[trimmed.Length] == '/'))
+        {
+            return fullPath[(trimmed.Length + 1)..];
+        }
+
+        return fullPath;
+    }
+
+    /// <summary>
+    /// Why a file inside <paramref name="root"/> is skipped by the name/type/path rules, in words a
+    /// person can act on, or null when none of them applies. Used to explain an empty history.
+    /// </summary>
+    public string? ExclusionReason(string fullPath, string? root = null)
+    {
+        if (ExcludedDirectoryName(fullPath, root) is { } dir)
+        {
+            return $"in a folder named \"{dir}\"";
+        }
+
+        if (IsExcludedByExtension(fullPath))
+        {
+            return $"{Path.GetExtension(fullPath).ToLowerInvariant()} files";
+        }
+
+        return IsUnderExcludedPrefix(fullPath) ? "inside a folder you excluded" : null;
     }
 
     public bool IsExcludedByExtension(string fullPath)
@@ -107,9 +153,9 @@ public sealed class PathExclusions
     /// skipped when unavailable). Never versions cloud online-only files (would hydrate them),
     /// reparse points, or over-size files.
     /// </summary>
-    public bool ShouldVersion(string fullPath, FileAttributes attributes, long sizeBytes)
+    public bool ShouldVersion(string fullPath, FileAttributes attributes, long sizeBytes, string? root = null)
     {
-        if (IsExcludedByDirectory(fullPath) || IsExcludedByExtension(fullPath) || IsUnderExcludedPrefix(fullPath))
+        if (IsExcludedByDirectory(fullPath, root) || IsExcludedByExtension(fullPath) || IsUnderExcludedPrefix(fullPath))
         {
             return false;
         }
