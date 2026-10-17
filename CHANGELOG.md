@@ -4,7 +4,7 @@ All notable changes to StepWind are documented here.
 
 ## Unreleased
 
-## 1.0.10 — 2026-10-16
+## 1.0.10 — 2026-10-17
 
 **Adding or changing a protected folder no longer stops saving until the next restart, a
 protected folder is never skipped because of where it lives, and an empty history now says the
@@ -25,9 +25,6 @@ both reproduced on a Windows 11 machine and fixed here.
   named — one of those had every file skipped, by the startup scan and by live saves.
   `D:\build\Docs`, `D:\out\bin\Projects`, or a protected folder called `dist` are versioned
   normally. A `node_modules`, `obj`, `.git`, … folder *inside* a protected folder is still skipped.
-- **Folder-name rules only judge folders below the protected folder.** `D:\build\Docs`,
-  `D:\out\bin\Projects`, or a protected folder called `dist` are versioned normally. A
-  `node_modules`, `obj`, `.git`, … folder *inside* a protected folder is still skipped.
 - **The status line says what actually happened.** The startup scan used to answer "Every file
   scanned is excluded" whenever it skipped anything as excluded and saved nothing, even when the
   real reason was a file it could not read. It now lists each reason with its count, for example
